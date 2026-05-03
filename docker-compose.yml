@@ -11,6 +11,6 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
-    # Optional: use host network if upstream services (upstream-host) are unreachable
+    # Optional: use host network if upstream services on the host are unreachable
     # from the default bridge. Uncomment on Linux hosts only.
     # network_mode: host

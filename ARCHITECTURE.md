@@ -43,26 +43,28 @@ Pydantic (validation)
 SEARCHPROXY_API_KEY=change-me-in-production
 
 # --- Compat: Perplexity / OpenAI search ---
-LITELLM_SEARCH_URL=http://upstream-host:4000/search/unifiedsearch
+# LiteLLM search router endpoint. Must include the full router name.
+LITELLM_SEARCH_URL=http://litellm-host:4000/search/unifiedsearch
 
 # --- Vane deep research ---
-VANE_URL=http://upstream-host:3001
+VANE_URL=http://vane-host:3001
 VANE_CHAT_PROVIDER_ID=
 VANE_CHAT_MODEL_KEY=
 VANE_EMBED_PROVIDER_ID=
 VANE_EMBED_MODEL_KEY=
 
 # --- Compat: SearXNG passthrough (optional; enables image/video categories) ---
-SEARXNG_URL=http://upstream-host:8980
+SEARXNG_URL=http://searxng-host:8980
 
 # --- Fetch: Crawl4AI (self-hosted) ---
 # Use /md for plain markdown fetch (fast, no LLM involved)
 # Use /crawl with extraction_config only for structured LLM extraction
-CRAWL4AI_URL=http://upstream-host:11235
+CRAWL4AI_URL=http://crawl4ai-host:11235
 
 # Optional: LLM config for Crawl4AI structured extraction (not plain fetch)
-CRAWL4AI_LLM_PROVIDER=ollama/minimax-m2.7
-CRAWL4AI_LLM_BASE_URL=http://upstream-host:4000/v1
+# Only needed if using Crawl4AI's LLM extraction features
+CRAWL4AI_LLM_PROVIDER=openai/gpt-4o-mini
+CRAWL4AI_LLM_BASE_URL=http://litellm-host:4000/v1
 CRAWL4AI_LLM_API_KEY=sk-your-secret-key
 
 # --- Fetch: Jina Reader (optional key for higher rate limits) ---

@@ -30,6 +30,8 @@ async def test_firecrawl_scrape_success(client, mock_fetch_chain):
         url="https://example.com",
         markdown="# Example Domain\n\nThis domain is for use in illustrative examples.",
         title="Example Domain",
+        description="An illustrative example domain",
+        language="en",
         error="",
         status_code=200,
         source="crawl4ai",
@@ -42,6 +44,8 @@ async def test_firecrawl_scrape_success(client, mock_fetch_chain):
     assert data["success"] is True
     assert data["data"]["markdown"] == "# Example Domain\n\nThis domain is for use in illustrative examples."
     assert data["data"]["metadata"]["title"] == "Example Domain"
+    assert data["data"]["metadata"]["description"] == "An illustrative example domain"
+    assert data["data"]["metadata"]["language"] == "en"
     assert data["data"]["metadata"]["sourceURL"] == "https://example.com"
     assert data["data"]["metadata"]["statusCode"] == 200
     assert data["data"]["html"] is None
@@ -141,3 +145,25 @@ async def test_firecrawl_scrape_auth_rejected_without_token(client, mock_fetch_c
     response = await client.post("/compat/firecrawl/v2/scrape", json={"url": "https://example.com"})
 
     assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_firecrawl_scrape_empty_fields_map_to_none(client, mock_fetch_chain):
+    """Empty description/language strings map to None in Firecrawl response."""
+    mock_fetch_chain.execute.return_value = FetchResult(
+        success=True,
+        url="https://example.com",
+        markdown="content",
+        title="Title",
+        description="",
+        language="",
+        status_code=200,
+        source="jina",
+    )
+
+    response = await client.post("/compat/firecrawl/v2/scrape", json={"url": "https://example.com"})
+
+    assert response.status_code == 200
+    meta = response.json()["data"]["metadata"]
+    assert meta["description"] is None
+    assert meta["language"] is None

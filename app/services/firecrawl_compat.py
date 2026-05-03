@@ -21,6 +21,8 @@ def build_firecrawl_response(result: FetchResult) -> dict[str, Any]:
                 "html": None,
                 "metadata": {
                     "title": result.title or None,
+                    "description": result.description or None,
+                    "language": result.language or None,
                     "sourceURL": result.url,
                     "statusCode": result.status_code,
                 },

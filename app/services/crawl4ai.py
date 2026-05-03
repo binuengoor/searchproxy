@@ -19,6 +19,8 @@ class FetchResult(BaseModel):
     url: str = Field(default="")
     markdown: str = Field(default="")
     title: str = Field(default="")
+    description: str = Field(default="")
+    language: str = Field(default="")
     error: str = Field(default="")
     status_code: int | None = Field(default=None)
     source: str = Field(default="")  # which tier succeeded: "crawl4ai", "jina", "scrape_do", "scraperapi"
@@ -108,16 +110,22 @@ class Crawl4AIClient:
 
         markdown = data.get("markdown", "") if isinstance(data, dict) else ""
         title = ""
+        description = ""
+        language = ""
         if isinstance(data, dict):
             metadata = data.get("metadata", {})
             if isinstance(metadata, dict):
                 title = metadata.get("title", "") or ""
+                description = metadata.get("description", "") or ""
+                language = metadata.get("language", "") or ""
 
         return FetchResult(
             success=True,
             url=url,
             markdown=markdown,
             title=title,
+            description=description,
+            language=language,
             status_code=status_code,
             source="crawl4ai",
         )

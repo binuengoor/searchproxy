@@ -6,10 +6,10 @@ All notable changes to SearchProxy will be documented in this file.
 
 ### Added
 - Initial project scaffold: FastAPI app, routers, services layer.
-- `POST /search` — thin relay to LiteLLM search router with normalized request/response.
-- `POST /v1/search` — OpenAI-compatible alias for `/search`.
-- `GET /compat/searxng` — convert SearXNG query params to LiteLLM search, normalize response back to SearXNG JSON.
-- `POST /research` — transparent proxy to Vane deep-research service.
+- `POST /compat/perplexity` — thin relay to LiteLLM search router with normalized request/response.
+- `POST /v1/search` — OpenAI-compatible alias for `/compat/perplexity`.
+- `GET /compat/searxng` — convert SearXNG query params to LiteLLM search (web), normalize response to SearXNG JSON. Images/videos optionally via upstream SearXNG passthrough.
+- `POST /vane` — transparent proxy to Vane deep-research service.
 - `POST /fetch` — multi-tier fetch chain:
   1. Crawl4AI (self-hosted, primary)
   2. Jina Reader (cloud backup for general failures)
@@ -30,7 +30,7 @@ All notable changes to SearchProxy will be documented in this file.
 ## Planned
 
 ### 0.2.0
-- MCP server layer (`mcp_server.py`) exposing `search`, `fetch`, `research` tools via stdio/SSE.
+- MCP server layer (`mcp_server.py`) exposing `perplexity_search`, `fetch`, `vane_research` tools via stdio/SSE.
 - Health check and metrics endpoints (`/health`, `/metrics`).
 - Structured logging with correlation IDs across async requests.
 - Add `max_results` client-side slicing after LiteLLM response normalization.

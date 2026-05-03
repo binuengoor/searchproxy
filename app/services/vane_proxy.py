@@ -47,10 +47,23 @@ class VaneProxyClient:
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self._client = client
         self._settings = settings
-        self._timeout = httpx.Timeout(
-            timeout=float(settings.VANE_TIMEOUT),
-            connect=10.0,
+
+    # Timeouts scale with research depth
+    _OPTIMIZATION_TIMEOUTS = {
+        "speed": 60,
+        "balanced": 180,
+        "quality": 300,
+    }
+
+    def _timeout_for_mode(self, optimization_mode: str) -> httpx.Timeout:
+        """Return an httpx.Timeout scaled to the optimization mode.
+
+        Falls back to VANE_TIMEOUT env var if the mode is unknown.
+        """
+        timeout_seconds = self._OPTIMIZATION_TIMEOUTS.get(
+            optimization_mode, self._settings.VANE_TIMEOUT
         )
+        return httpx.Timeout(timeout=float(timeout_seconds), connect=10.0)
 
     def _build_url(self) -> str:
         """Return the Vane /api/search endpoint from the configured base URL."""
@@ -93,16 +106,17 @@ class VaneProxyClient:
         log.info("Vane research request: query='%s' optimization_mode=%s", query, optimization_mode)
 
         body = self._build_body(query, optimization_mode, stream=False)
+        timeout = self._timeout_for_mode(optimization_mode)
         try:
             response = await self._client.post(
                 self._build_url(),
                 json=body,
-                timeout=self._timeout,
+                timeout=timeout,
             )
             response.raise_for_status()
         except httpx.TimeoutException:
             raise VaneTimeoutError(
-                f"Vane research timed out after {self._settings.VANE_TIMEOUT}s for query='{query}'"
+                f"Vane research timed out after {timeout.timeout}s for query='{query}'"
             ) from None
         except httpx.HTTPStatusError as exc:
             raise VaneUpstreamError(
@@ -132,12 +146,13 @@ class VaneProxyClient:
         log.info("Vane research stream request: query='%s' optimization_mode=%s", query, optimization_mode)
 
         body = self._build_body(query, optimization_mode, stream=True)
+        timeout = self._timeout_for_mode(optimization_mode)
         try:
             async with self._client.stream(
                 "POST",
                 self._build_url(),
                 json=body,
-                timeout=self._timeout,
+                timeout=timeout,
             ) as response:
                 response.raise_for_status()
                 async for chunk in response.aiter_text():

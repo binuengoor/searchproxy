@@ -32,7 +32,7 @@ Pydantic (validation)
 ||----------|--------|-------------|
 || `/compat/perplexity` | POST | Thin relay to LiteLLM search router. Perplexity-compatible responses. |
 || `/compat/searxng` | GET | SearXNG JSON compatibility. Image/video passthrough to upstream SearXNG when configured. |
-| `/vane` | POST | Deep research proxy to Vane. Input: query + optional `optimization_mode` (`speed`/`balanced`/`quality`). Output: synthesized report with inline citations. Supports streaming (`?stream=true`). |
+| `/vane` | POST | Deep research proxy to Vane. Input: query + optional `optimization_mode` (`speed`/`balanced`/`quality`). Timeouts scale with mode: speed 60s, balanced 180s, quality 300s. Output: synthesized report with inline citations. Supports streaming (`?stream=true`). |
 | `/fetch` | POST | Fetch a single URL. Runs Crawl4AI → Jina Reader → anti-bot firebreak. |
 | `/compat/firecrawl/v2/scrape` | POST | Firecrawl v2-compatible scrape. Wraps the same fetch chain; accepts full Firecrawl request schema. Unsupported params accepted and ignored. |
 
@@ -161,7 +161,7 @@ Vane failures are **never silent**. The service raises typed exceptions (`VaneTi
 
 || Exception | Trigger | Router response |
 |---|---|---|
-| `VaneTimeoutError` | Vane didn't respond within `VANE_TIMEOUT` | `200` with report: `"[Deep research unavailable: ...timed out...]"` |
+| `VaneTimeoutError` | Vane didn't respond within mode-scaled timeout | `200` with report: `"[Deep research unavailable: ...timed out...]"` |
 | `VaneUpstreamError` | Vane returned non-2xx (e.g. 500) | `200` with report: `"[Deep research unavailable: ...HTTP 500...]"` |
 | `VaneError` | Connection refused, DNS, other transport errors | `200` with report: `"[Deep research unavailable: ...]"` |
 

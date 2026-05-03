@@ -83,10 +83,12 @@
   - 14-17. Auth excluded paths (`/health`, `/docs`, `/openapi.json`, `/compat/perplexity` with `require_auth=false`) all return 200 ✅
   - 18-20. Missing params return 422 (`searxng` missing `q`, `fetch` missing `url`, `vane` missing `query`) ✅
   - 21. `/mcp` returns 404 (not implemented, expected) ✅
-- [x] **SearXNG fixes applied:**
+- [x] **SearXNG compat fixes:**
   - `app/main.py`: `httpx.AsyncClient(follow_redirects=True)` to handle upstream HTTP 308 redirects
   - `.env.example`: `SEARXNG_URL` now includes `/search` suffix to avoid redirect
   - `app/services/searxng_compat.py`: `field_validator` for `unresponsive_engines` handles SearXNG's list-of-lists format `[['brave.images','Suspended: too many requests'],...]` which caused Pydantic 500 errors
+- [x] **Vane SearXNG integration fix** — added `/compat/searxng/search` sub-endpoint (Vane calls this path internally)
+- [x] **HTML format support** — `/compat/searxng?format=html` returns a simple styled HTML results page; media queries (images/videos) passthrough raw upstream SearXNG HTML
 - [x] **`.env` kept untracked** — real API keys never committed to git history
 
 ## Known Issues / Limitations (from live test)

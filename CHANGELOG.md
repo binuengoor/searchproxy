@@ -8,9 +8,12 @@ All notable changes to SearchProxy will be documented in this file.
 - Initial project scaffold: FastAPI app, routers, services layer.
 - `POST /compat/perplexity` — thin relay to LiteLLM search router with normalized request/response.
 - `POST /v1/search` — OpenAI-compatible alias for `/compat/perplexity`.
-- `GET /compat/searxng` — convert SearXNG query params to LiteLLM search (web), normalize response to SearXNG JSON. Images/videos optionally via upstream SearXNG passthrough.
+- `GET /compat/searxng` — convert SearXNG query params to LiteLLM search (web), normalize response to SearXNG JSON.
+- `GET /compat/searxng/search` — Vane-compatible subpath alias for `/compat/searxng`.
+- `GET /compat/searxng?format=html` — HTML response mode for browser consumption (simple results page).
+- Media passthrough: `categories=images` or `categories=videos` forwarded directly to upstream SearXNG (JSON + HTML).
 - `POST /vane` — transparent proxy to Vane deep-research service.
-- `POST /fetch` — multi-tier fetch chain:
+- `POST /fetch` — multi-tier fetch chain.
   1. Crawl4AI (self-hosted, primary)
   2. Jina Reader (cloud backup for general failures)
   3. Anti-bot firebreak with detection logic — Scrape.do → ScraperAPI (quarantined for Cloudflare blocks only)

@@ -39,6 +39,9 @@ Pydantic (validation)
 ## Environment Configuration
 
 ```bash
+# --- Core: API Authentication ---
+SEARCHPROXY_API_KEY=change-me-in-production
+
 # --- Compat: Perplexity / OpenAI search ---
 LITELLM_SEARCH_URL=http://upstream-host:4000/search/unifiedsearch
 
@@ -53,9 +56,17 @@ VANE_EMBED_MODEL_KEY=
 SEARXNG_URL=http://upstream-host:8980
 
 # --- Fetch: Crawl4AI (self-hosted) ---
-CRAWL4AI_URL=http://localhost:11235
+# Use /md for plain markdown fetch (fast, no LLM involved)
+# Use /crawl with extraction_config only for structured LLM extraction
+CRAWL4AI_URL=http://upstream-host:11235
+
+# Optional: LLM config for Crawl4AI structured extraction (not plain fetch)
+CRAWL4AI_LLM_PROVIDER=ollama/minimax-m2.7
+CRAWL4AI_LLM_BASE_URL=http://upstream-host:4000/v1
+CRAWL4AI_LLM_API_KEY=sk-your-secret-key
 
 # --- Fetch: Jina Reader (optional key for higher rate limits) ---
+# No key = 20 RPM. With key = 500 RPM + access to Reranker/DeepSearch
 JINA_API_KEY=
 
 # --- Fetch: Anti-bot specialists (quarantined) ---
@@ -98,6 +109,8 @@ User requests /fetch?url=<URL>
 │
 ▼
 1. Crawl4AI (self-hosted, primary)
+   Endpoint: POST /md for plain markdown fetch (fast, clean)
+   Endpoint: POST /crawl with extraction_config only for structured LLM extraction (slower)
    ├── Success → return markdown + metadata
    └── Failure
        ├── Is 403 / Cloudflare / anti-bot indicator?

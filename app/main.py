@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from starlette.responses import RedirectResponse
 
 from app.config import settings
+from app.openapi_deref import dereference
 
 # Module-level shared client, initialized in lifespan
 _client: httpx.AsyncClient | None = None
@@ -47,6 +48,17 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Overwrite /openapi.json handler so MCPHub receives a $ref-free spec.
+_original_openapi = app.openapi
+
+
+def _dereferenced_openapi() -> dict[str, Any]:
+    raw = _original_openapi()
+    return dereference(raw)
+
+
+app.openapi = _dereferenced_openapi  # type: ignore[method-assign]
 
 
 # ---------------------------------------------------------------------------

@@ -35,7 +35,7 @@ async def test_firecrawl_scrape_success(client, mock_fetch_chain):
         source="crawl4ai",
     )
 
-    response = await client.post("/compat/firecrawl/scrape", json={"url": "https://example.com"})
+    response = await client.post("/compat/firecrawl/v2/scrape", json={"url": "https://example.com"})
 
     assert response.status_code == 200
     data = response.json()
@@ -61,7 +61,7 @@ async def test_firecrawl_scrape_failure_returns_200(client, mock_fetch_chain):
         source="",
     )
 
-    response = await client.post("/compat/firecrawl/scrape", json={"url": "https://cloudflare.example"})
+    response = await client.post("/compat/firecrawl/v2/scrape", json={"url": "https://cloudflare.example"})
 
     assert response.status_code == 200
     data = response.json()
@@ -90,7 +90,7 @@ async def test_firecrawl_scrape_ignores_unsupported_params(client, mock_fetch_ch
         "mobile": True,
         "waitFor": 2000,
     }
-    response = await client.post("/compat/firecrawl/scrape", json=payload)
+    response = await client.post("/compat/firecrawl/v2/scrape", json=payload)
 
     assert response.status_code == 200
     data = response.json()
@@ -101,7 +101,7 @@ async def test_firecrawl_scrape_ignores_unsupported_params(client, mock_fetch_ch
 @pytest.mark.anyio
 async def test_firecrawl_scrape_missing_url_returns_422(client, mock_fetch_chain):
     """Missing 'url' field returns 422 validation error."""
-    response = await client.post("/compat/firecrawl/scrape", json={})
+    response = await client.post("/compat/firecrawl/v2/scrape", json={})
 
     assert response.status_code == 422
     errors = response.json()["detail"]
@@ -121,7 +121,7 @@ async def test_firecrawl_scrape_auth_required(auth_client, mock_fetch_chain):
         source="crawl4ai",
     )
 
-    response = await auth_client.post("/compat/firecrawl/scrape", json={"url": "https://example.com"})
+    response = await auth_client.post("/compat/firecrawl/v2/scrape", json={"url": "https://example.com"})
 
     assert response.status_code == 200
     assert response.json()["success"] is True
@@ -138,6 +138,6 @@ async def test_firecrawl_scrape_auth_rejected_without_token(client, mock_fetch_c
         app.config.Settings(SEARCHPROXY_REQUIRE_AUTH=True, SEARCHPROXY_API_KEY="real-key"),
     )
 
-    response = await client.post("/compat/firecrawl/scrape", json={"url": "https://example.com"})
+    response = await client.post("/compat/firecrawl/v2/scrape", json={"url": "https://example.com"})
 
     assert response.status_code == 401

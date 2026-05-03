@@ -62,7 +62,7 @@ def _get_fetch_chain() -> FetchChain:
 
 
 @router.post(
-    "/scrape",
+    "/v2/scrape",
     response_model=dict[str, Any],
     status_code=status.HTTP_200_OK,
     summary="Firecrawl v2-compatible scrape endpoint",

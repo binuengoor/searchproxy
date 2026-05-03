@@ -1,0 +1,43 @@
+# Changelog
+
+All notable changes to SearchProxy will be documented in this file.
+
+## [0.1.0] — Unreleased
+
+### Added
+- Initial project scaffold: FastAPI app, routers, services layer.
+- `POST /search` — thin relay to LiteLLM search router with normalized request/response.
+- `POST /v1/search` — OpenAI-compatible alias for `/search`.
+- `GET /compat/searxng` — convert SearXNG query params to LiteLLM search, normalize response back to SearXNG JSON.
+- `POST /research` — transparent proxy to Vane deep-research service.
+- `POST /fetch` — multi-tier fetch chain:
+  1. Crawl4AI (self-hosted, primary)
+  2. Jina Reader (cloud backup for general failures)
+  3. Anti-bot firebreak with detection logic — Scrape.do → ScraperAPI (quarantined for Cloudflare blocks only)
+- Anti-bot detection: HTTP 403, body indicators (`cloudflare`, `just a moment`, `checking your browser`, `ddos-guard`), explicit Crawl4AI errors.
+- Monthly client-side credit tracking for Scrape.do and ScraperAPI to prevent overage on free tiers.
+- Pydantic Settings from environment variables with sensible defaults.
+- Docker + docker-compose setup for self-hosting.
+- Comprehensive ARCHITECTURE.md with design constraints, endpoint matrix, fetch chain diagram, and decision rationale.
+
+### Architecture
+- No custom search provider rotation — delegated entirely to LiteLLM router.
+- No FlareSolverr — Crawl4AI's undetected browser + stealth modes replace brute-force headless.
+- No manual provider lists or ranking logic — service is a thin gateway, not a router.
+- Anti-bot services isolated: never invoked for routine fetches, only for confirmed anti-bot blocks.
+- Jina Reader included with optional API key: enables higher rate limits (500 RPM vs 20 RPM) and future Jina services (Reranker, Embeddings).
+
+## Planned
+
+### 0.2.0
+- MCP server layer (`mcp_server.py`) exposing `search`, `fetch`, `research` tools via stdio/SSE.
+- Health check and metrics endpoints (`/health`, `/metrics`).
+- Structured logging with correlation IDs across async requests.
+- Add `max_results` client-side slicing after LiteLLM response normalization.
+- Graceful degradation when Crawl4AI container is unreachable (skip to Jina instead of error).
+
+### 0.3.0
+- Jina Reranker integration for `/search` response post-processing.
+- Request/response caching with TTL for identical search queries.
+- Configurable fetch chain depth via query param.
+

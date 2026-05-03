@@ -48,11 +48,11 @@
 - [x] `LOG_LEVEL` env var support in `app/main.py`
 - [x] DNS override in `docker-compose.yml` (public DNS for anti-bot API reachability)
 - [x] `SEARCHPROXY_REQUIRE_AUTH` + `LITELLM_API_KEY` added to `.env.example`
+- [x] Test suite: 11 passing tests (search router + fetch chain) with `pytest`
+- [x] Docker image built: `searchproxy:latest` at 187MB
+- [x] Smoke test passed: `curl http://localhost:8081/health` → `{"status":"ok"}`
 
 ## In Progress
-- [ ] Write `tests/test_search.py` — LiteLLM relay tests with mocked httpx
-- [ ] Write `tests/test_fetch_chain.py` — tiered fetch + anti-bot detection tests
-- [ ] Build Docker image: `docker compose -f docker-compose.build.yml build`
 - [ ] Validate `.env` file completeness and connectivity for all upstream services
 
 ## Backlog (Phase 3 — Deploy)

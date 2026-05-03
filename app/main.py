@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     log.info("Starting searchproxy")
-    _client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+    _client = httpx.AsyncClient(timeout=httpx.Timeout(60.0), follow_redirects=True)
     yield
     log.info("Shutting down searchproxy")
     if _client is not None:

@@ -48,9 +48,27 @@
 - [x] `LOG_LEVEL` env var support in `app/main.py`
 - [x] DNS override in `docker-compose.yml` (public DNS for anti-bot API reachability)
 - [x] `SEARCHPROXY_REQUIRE_AUTH` + `LITELLM_API_KEY` added to `.env.example`
-- [x] Test suite: 11 passing tests (search router + fetch chain) with `pytest`
-- [x] Docker image built: `searchproxy:latest` at 187MB
-- [x] Smoke test passed: `curl http://localhost:8081/health` → `{"status":"ok"}`
+- [x] Test suite: 11 passing tests (search router + fetch chain service) with `pytest`
+- [x] Docker image built: `searchproxy:latest` at ~187MB
+- [x] **Live test — all endpoints validated against real upstreams:**
+  - `/health` ✅ (no auth)
+  - `/compat/perplexity` ✅ (returns real search results from LiteLLM)
+  - `/v1/search` alias ✅
+  - `/compat/searxng` ✅ (general query + LiteLLM normalization)
+  - `/compat/searxng?categories=images` ✅ (passthrough to SearXNG, returns image results)
+  - `/vane` ✅ **FIXED during live test** — now calls correct `POST /api/search` endpoint with proper Vane JSON body (`chatModel`, `embeddingModel`, `optimizationMode`, `sources`, `history`, `stream`). Depth mapping: `concise→speed`, `balanced→balanced`, `comprehensive→quality`.
+  - `/fetch` ✅ (Crawl4AI tier succeeds for most pages)
+  - `/fetch` anti-bot ✅ (Cloudflare site escalated through Crawl4AI → Jina → ScraperAPI, returned 982KB markdown)
+  - Auth middleware ✅ (`require_auth=true` blocks missing/wrong tokens on all routes; `/health`, `/docs`, `/openapi.json`, `/redoc` remain open)
+- [x] **Git history scrubbed** with `git filter-repo` to remove `10.1.1.150` internal IP from all commits
+- [x] `docker-compose.yml` comment fixed after filter-repo collateral
+
+## Known Issues / Limitations (from live test)
+- [ ] `/vane` with long research queries can take 2+ minutes — Vane backend timeout, not searchproxy. Consider increasing `VANE_TIMEOUT` beyond 120s for `comprehensive` depth.
+- [ ] `/vane` streaming endpoint (`?stream=true`) yields init handshake but chunk parsing may need client-side SSE handling (Vane returns server-sent events, not plain text chunks).
+- [ ] `/compat/searxng` image/video passthrough: when SearXNG has no results, returns `count: 0` correctly, but client may want a clearer "no images found" message.
+- [ ] `FETCH_TIMEOUT=30` is adequate for most pages, but anti-bot firebreak can add cumulative latency. Consider per-tier timeouts.
+- [ ] Jina Reader API key is active and working; Scrape.do and ScraperAPI keys are also active (confirmed via anti-bot escalation test).
 
 ## In Progress
 - [ ] Validate `.env` file completeness and connectivity for all upstream services
@@ -63,8 +81,15 @@
 - [ ] Test end-to-end: Open WebUI → searchproxy → Crawl4AI → fetch
 
 ## Backlog (Phase 4 — Enhance)
+- [ ] **Add missing tests** (unit + integration):
+  - [ ] `tests/test_searxng.py` — `/compat/searxng` router (general + images passthrough)
+  - [ ] `tests/test_vane.py` — `/vane` sync + streaming with mocked `VaneProxyClient`
+  - [ ] `tests/test_fetch_http.py` — `/fetch` HTTP endpoint (not just fetch_chain service)
+  - [ ] `tests/test_auth.py` — auth middleware (`require_auth=true`, invalid token, missing header, excluded paths)
+  - [ ] `tests/test_openapi.py` — assert all 5 endpoints present in `/openapi.json`
+  - [ ] Update `tests/test_search_and_fetch.py` — rename to reflect it only tests search router + fetch chain service
+- [ ] **MCP server layer** (`mcp_server.py` via stdio + SSE) — architecture-only, no implementation
 - [ ] Add `/metrics` endpoint with Prometheus-style output
-- [ ] MCP server layer (`mcp_server.py` via stdio + SSE)
 - [ ] Structured logging with JSON formatter + correlation_id
 - [ ] Response caching (HTTP cache headers or Redis)
 
@@ -72,3 +97,4 @@
 - [ ] Add Jina Reranker post-processing for search results
 - [ ] CI/CD with GitHub Actions (lint, type-check, test)
 - [ ] Open WebUI skill prompt A/B testing
+- [ ] **Security**: `.env` contains real API keys (Jina, Scrape.do, ScraperAPI). File is git-ignored but was committed before ignore rule. Consider `git filter-repo` to scrub `.env` from history if repo goes public.

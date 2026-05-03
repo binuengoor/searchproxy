@@ -16,6 +16,14 @@ class VaneResearchResponse(BaseModel):
     report: str = Field(default="", description="Synthesized research report text with inline citations.")
 
 
+# Map user-facing depth names to Vane optimizationMode values.
+_DEPTH_MAP = {
+    "concise": "speed",
+    "balanced": "balanced",
+    "comprehensive": "quality",
+}
+
+
 class VaneProxyClient:
     """Standalone async client for the Vane deep research service.
 
@@ -26,8 +34,31 @@ class VaneProxyClient:
         self._client = client
         self._settings = settings
 
+    def _build_url(self) -> str:
+        """Return the Vane /api/search endpoint from the configured base URL."""
+        base = str(self._settings.VANE_URL).rstrip("/")
+        return f"{base}/api/search"
+
+    def _build_body(self, query: str, depth: str, stream: bool) -> dict:
+        """Build the Vane /api/search JSON body."""
+        return {
+            "query": query,
+            "chatModel": {
+                "providerId": self._settings.VANE_CHAT_PROVIDER_ID or "",
+                "key": self._settings.VANE_CHAT_MODEL_KEY or "",
+            },
+            "embeddingModel": {
+                "providerId": self._settings.VANE_EMBED_PROVIDER_ID or "",
+                "key": self._settings.VANE_EMBED_MODEL_KEY or "",
+            },
+            "optimizationMode": _DEPTH_MAP.get(depth, depth),
+            "sources": ["web"],
+            "history": [],
+            "stream": stream,
+        }
+
     async def research(self, query: str, depth: str = "balanced") -> str:
-        """POST to Vane, return the synthesized report as raw text.
+        """POST to Vane /api/search, return the synthesized report as raw text.
 
         Graceful degradation: on any error (timeout, HTTP error, parse failure)
         returns an empty string so callers always get a valid response and never
@@ -42,14 +73,7 @@ class VaneProxyClient:
         """
         log.info("Vane research request: query='%s' depth=%s", query, depth)
 
-        body: dict[str, str] = {
-            "message": query,
-            "chatProviderId": self._settings.VANE_CHAT_PROVIDER_ID or "",
-            "chatModelKey": self._settings.VANE_CHAT_MODEL_KEY or "",
-            "embedProviderId": self._settings.VANE_EMBED_PROVIDER_ID or "",
-            "embedModelKey": self._settings.VANE_EMBED_MODEL_KEY or "",
-        }
-
+        body = self._build_body(query, depth, stream=False)
         timeout = httpx.Timeout(
             timeout=float(self._settings.VANE_TIMEOUT),
             connect=10.0,
@@ -57,13 +81,14 @@ class VaneProxyClient:
 
         try:
             response = await self._client.post(
-                self._settings.VANE_URL,
+                self._build_url(),
                 json=body,
                 timeout=timeout,
             )
             response.raise_for_status()
-            # Vane returns the report as plain text / markdown.
-            return response.text
+            # Vane returns JSON with {"message": "...", "sources": [...]}
+            data = response.json()
+            return data.get("message", "")
         except httpx.TimeoutException:
             log.warning("Vane research timed out for query='%s'", query)
             return ""
@@ -93,14 +118,7 @@ class VaneProxyClient:
         """
         log.info("Vane research stream request: query='%s' depth=%s", query, depth)
 
-        body: dict[str, str] = {
-            "message": query,
-            "chatProviderId": self._settings.VANE_CHAT_PROVIDER_ID or "",
-            "chatModelKey": self._settings.VANE_CHAT_MODEL_KEY or "",
-            "embedProviderId": self._settings.VANE_EMBED_PROVIDER_ID or "",
-            "embedModelKey": self._settings.VANE_EMBED_MODEL_KEY or "",
-        }
-
+        body = self._build_body(query, depth, stream=True)
         timeout = httpx.Timeout(
             timeout=float(self._settings.VANE_TIMEOUT),
             connect=10.0,
@@ -109,7 +127,7 @@ class VaneProxyClient:
         try:
             async with self._client.stream(
                 "POST",
-                self._settings.VANE_URL,
+                self._build_url(),
                 json=body,
                 timeout=timeout,
             ) as response:

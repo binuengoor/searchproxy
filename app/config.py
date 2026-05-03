@@ -19,8 +19,6 @@ class Settings(BaseSettings):
     SEARCHPROXY_REQUIRE_AUTH: bool = Field(default=False)
     SEARCHPROXY_API_KEY: str = "change-me-in-production"
 
-    # --- (rest of settings unchanged) ---
-
     # --- Compat: Perplexity / OpenAI ---
     LITELLM_SEARCH_URL: str = Field(default="http://litellm-host:4000/search/unifiedsearch")
     LITELLM_API_KEY: str | None = Field(default=None)
@@ -47,6 +45,9 @@ class Settings(BaseSettings):
     # --- Fetch: Anti-bot (quarantined) ---
     SCRAPE_DO_API_KEY: str | None = Field(default=None)
     SCRAPERAPI_API_KEY: str | None = Field(default=None)
+
+    # --- Logging ---
+    LOG_LEVEL: str = Field(default="INFO")
 
     # --- Timeouts ---
     FETCH_TIMEOUT: int = Field(default=30)

@@ -94,6 +94,7 @@ class Crawl4AIClient:
                 success=False,
                 url=url,
                 error=f"HTTP {exc.response.status_code}",
+                markdown=exc.response.text[:2000],
                 status_code=exc.response.status_code,
                 source="crawl4ai",
             )

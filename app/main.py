@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage httpx client lifecycle across startup/shutdown."""
     global _client
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     log.info("Starting searchproxy")

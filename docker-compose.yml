@@ -7,6 +7,10 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    # Use public DNS to avoid Pi-hole/AdGuard blocking anti-bot APIs
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     # Optional: use host network if upstream services (upstream-host) are unreachable
     # from the default bridge. Uncomment on Linux hosts only.
     # network_mode: host

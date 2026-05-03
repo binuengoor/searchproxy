@@ -89,6 +89,14 @@ class FetchChain:
         # ── Tier 1: Crawl4AI ────────────────────────────────────────────────
         result = await self._crawl4ai.fetch_markdown(url)
         if result.success:
+            # Even on success, check if the body contains anti-bot content
+            if _is_anti_bot_block(result.status_code, result.markdown):
+                log.warning(
+                    "Crawl4AI returned %s but anti-bot content detected for %s, escalating to firebreak",
+                    result.status_code,
+                    url,
+                )
+                return await self._firebreak(url)
             log.info("Crawl4AI succeeded for %s", url)
             return result
 
@@ -105,6 +113,14 @@ class FetchChain:
         log.info("Crawl4AI failed for %s (not anti-bot), trying Jina", url)
         jina_result = await self._jina.fetch(url)
         if jina_result.success:
+            # Jina returned HTTP 200, but check if the body is actually an anti-bot page
+            if _is_anti_bot_block(jina_result.status_code, jina_result.markdown):
+                log.warning(
+                    "Jina Reader returned %s but anti-bot content detected for %s, escalating to firebreak",
+                    jina_result.status_code,
+                    url,
+                )
+                return await self._firebreak(url)
             log.info("Jina Reader succeeded for %s", url)
             return jina_result
 

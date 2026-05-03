@@ -33,6 +33,10 @@ class VaneProxyClient:
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self._client = client
         self._settings = settings
+        self._timeout = httpx.Timeout(
+            timeout=float(settings.VANE_TIMEOUT),
+            connect=10.0,
+        )
 
     def _build_url(self) -> str:
         """Return the Vane /api/search endpoint from the configured base URL."""
@@ -74,16 +78,12 @@ class VaneProxyClient:
         log.info("Vane research request: query='%s' depth=%s", query, depth)
 
         body = self._build_body(query, depth, stream=False)
-        timeout = httpx.Timeout(
-            timeout=float(self._settings.VANE_TIMEOUT),
-            connect=10.0,
-        )
 
         try:
             response = await self._client.post(
                 self._build_url(),
                 json=body,
-                timeout=timeout,
+                timeout=self._timeout,
             )
             response.raise_for_status()
             # Vane returns JSON with {"message": "...", "sources": [...]}
@@ -119,17 +119,13 @@ class VaneProxyClient:
         log.info("Vane research stream request: query='%s' depth=%s", query, depth)
 
         body = self._build_body(query, depth, stream=True)
-        timeout = httpx.Timeout(
-            timeout=float(self._settings.VANE_TIMEOUT),
-            connect=10.0,
-        )
 
         try:
             async with self._client.stream(
                 "POST",
                 self._build_url(),
                 json=body,
-                timeout=timeout,
+                timeout=self._timeout,
             ) as response:
                 response.raise_for_status()
                 async for chunk in response.aiter_text():
@@ -137,11 +133,14 @@ class VaneProxyClient:
                         yield chunk
         except httpx.TimeoutException:
             log.warning("Vane research stream timed out for query='%s'", query)
+            yield f"[Vane stream error: timeout]"
         except httpx.HTTPStatusError as exc:
             log.warning(
                 "Vane research stream returned HTTP %d for query='%s'",
                 exc.response.status_code,
                 query,
             )
+            yield f"[Vane stream error: HTTP {exc.response.status_code}]"
         except Exception as exc:
             log.warning("Vane research stream failed for query='%s': %s", query, exc)
+            yield f"[Vane stream error: {exc}]"

@@ -9,6 +9,9 @@ from app.config import Settings
 
 log = logging.getLogger(__name__)
 
+# Fire the HTTPS-without-key warning at most once per process lifetime.
+_warned_https_no_key = False
+
 
 class SearchResult(BaseModel):
     """A single search result from LiteLLM."""
@@ -33,6 +36,10 @@ class LiteLLMSearchClient:
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self._client = client
         self._settings = settings
+        self._timeout = httpx.Timeout(
+            timeout=float(settings.SEARCH_TIMEOUT),
+            connect=5.0,
+        )
 
     async def search(
         self,
@@ -51,23 +58,21 @@ class LiteLLMSearchClient:
         if self._settings.LITELLM_API_KEY:
             headers["Authorization"] = f"Bearer {self._settings.LITELLM_API_KEY}"
         elif self._settings.LITELLM_SEARCH_URL.startswith("https://"):
-            log.warning(
-                "LITELLM_SEARCH_URL uses https but no LITELLM_API_KEY is set"
-            )
+            global _warned_https_no_key
+            if not _warned_https_no_key:
+                log.warning(
+                    "LITELLM_SEARCH_URL uses https but no LITELLM_API_KEY is set"
+                )
+                _warned_https_no_key = True
 
         body = {"query": query, "max_results": max_results}
-
-        timeout = httpx.Timeout(
-            timeout=float(self._settings.SEARCH_TIMEOUT),
-            connect=5.0,
-        )
 
         try:
             response = await self._client.post(
                 self._settings.LITELLM_SEARCH_URL,
                 json=body,
                 headers=headers,
-                timeout=timeout,
+                timeout=self._timeout,
             )
             response.raise_for_status()
             data = response.json()

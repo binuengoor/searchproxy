@@ -48,18 +48,3 @@ async def compat_perplexity(
         body.max_results,
     )
     return await client.search(query=body.query, max_results=body.max_results)
-
-
-@router.post(
-    "/v1/search",
-    response_model=SearchResponse,
-    status_code=status.HTTP_200_OK,
-    summary="OpenAI-compatible search (alias)",
-    include_in_schema=False,
-)
-async def v1_search(
-    body: PerplexityQuery,
-    client: Annotated[LiteLLMSearchClient, Depends(_get_litellm_client)],
-) -> SearchResponse:
-    """Alias for /compat/perplexity with OpenAI-compatible naming."""
-    return await compat_perplexity(body=body, client=client)

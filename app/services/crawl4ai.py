@@ -33,6 +33,10 @@ class Crawl4AIClient:
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self._client = client
         self._settings = settings
+        self._timeout = httpx.Timeout(
+            timeout=float(settings.FETCH_TIMEOUT),
+            connect=5.0,
+        )
 
     async def fetch_markdown(self, url: str) -> FetchResult:
         """POST to Crawl4AI /md for plain markdown fetch.
@@ -49,18 +53,13 @@ class Crawl4AIClient:
         """
         log.info("Crawl4AI fetch_markdown: %s", url)
 
-        timeout = httpx.Timeout(
-            timeout=float(self._settings.FETCH_TIMEOUT),
-            connect=5.0,
-        )
-
         body: dict[str, str] = {"url": url, "filter": "fit"}
 
         try:
             response = await self._client.post(
                 f"{self._settings.CRAWL4AI_URL}/md",
                 json=body,
-                timeout=timeout,
+                timeout=self._timeout,
             )
             status_code = response.status_code
 
@@ -100,113 +99,6 @@ class Crawl4AIClient:
             )
         except Exception as exc:
             log.warning("Crawl4AI fetch_markdown failed for %s: %s", url, exc)
-            return FetchResult(
-                success=False,
-                url=url,
-                error=str(exc),
-                source="crawl4ai",
-            )
-
-        markdown = data.get("markdown", "") if isinstance(data, dict) else ""
-        title = ""
-        if isinstance(data, dict):
-            metadata = data.get("metadata", {})
-            if isinstance(metadata, dict):
-                title = metadata.get("title", "") or ""
-
-        return FetchResult(
-            success=True,
-            url=url,
-            markdown=markdown,
-            title=title,
-            status_code=status_code,
-            source="crawl4ai",
-        )
-
-    async def fetch_extract(self, url: str, prompt: str | None = None) -> FetchResult:
-        """POST to Crawl4AI /crawl with LLM extraction config.
-
-        Only available when CRAWL4AI_LLM_PROVIDER, CRAWL4AI_LLM_BASE_URL, and
-        CRAWL4AI_LLM_API_KEY are all configured. Otherwise returns a failure result.
-
-        Args:
-            url: The target URL to fetch.
-            prompt: Optional extraction prompt for LLM-guided extraction.
-
-        Returns:
-            FetchResult with extracted content on success, or success=False if
-            LLM config is missing or the request fails.
-        """
-        if not all(
-            [
-                self._settings.CRAWL4AI_LLM_PROVIDER,
-                self._settings.CRAWL4AI_LLM_BASE_URL,
-                self._settings.CRAWL4AI_LLM_API_KEY,
-            ]
-        ):
-            log.info(
-                "Crawl4AI fetch_extract skipped: LLM config not fully set for %s",
-                url,
-            )
-            return FetchResult(
-                success=False,
-                url=url,
-                error="Crawl4AI LLM extraction not configured",
-                source="crawl4ai",
-            )
-
-        log.info("Crawl4AI fetch_extract: %s", url)
-
-        timeout = httpx.Timeout(
-            timeout=float(self._settings.FETCH_TIMEOUT),
-            connect=5.0,
-        )
-
-        extraction_config: dict[str, object] = {
-            "provider": self._settings.CRAWL4AI_LLM_PROVIDER,
-            "api_key": self._settings.CRAWL4AI_LLM_API_KEY,
-            "base_url": self._settings.CRAWL4AI_LLM_BASE_URL,
-        }
-        if prompt:
-            extraction_config["prompt"] = prompt
-
-        body: dict[str, object] = {
-            "url": url,
-            "extraction_config": extraction_config,
-        }
-
-        try:
-            response = await self._client.post(
-                f"{self._settings.CRAWL4AI_URL}/crawl",
-                json=body,
-                timeout=timeout,
-            )
-            status_code = response.status_code
-            response.raise_for_status()
-            data = response.json()
-        except httpx.TimeoutException:
-            log.warning("Crawl4AI fetch_extract timed out for %s", url)
-            return FetchResult(
-                success=False,
-                url=url,
-                error="timeout",
-                source="crawl4ai",
-            )
-        except httpx.HTTPStatusError as exc:
-            log.warning(
-                "Crawl4AI fetch_extract returned HTTP %d for %s",
-                exc.response.status_code,
-                url,
-            )
-            return FetchResult(
-                success=False,
-                url=url,
-                error=f"HTTP {exc.response.status_code}",
-                status_code=exc.response.status_code,
-                source="crawl4ai",
-            )
-        except Exception as exc:
-            log.warning("Crawl4AI fetch_extract failed for %s: %s", url, exc)
             return FetchResult(
                 success=False,
                 url=url,

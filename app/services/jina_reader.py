@@ -22,6 +22,10 @@ class JinaReaderClient:
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self._client = client
         self._settings = settings
+        self._timeout = httpx.Timeout(
+            timeout=float(settings.FETCH_TIMEOUT),
+            connect=5.0,
+        )
 
     async def fetch(self, url: str) -> FetchResult:
         """GET Jina Reader at https://r.jina.ai/http://{url}.
@@ -38,11 +42,6 @@ class JinaReaderClient:
         """
         log.info("Jina Reader fetch: %s", url)
 
-        timeout = httpx.Timeout(
-            timeout=float(self._settings.FETCH_TIMEOUT),
-            connect=5.0,
-        )
-
         jina_url = f"https://r.jina.ai/{url}"
         headers: dict[str, str] = {}
         if self._settings.JINA_API_KEY:
@@ -52,7 +51,7 @@ class JinaReaderClient:
             response = await self._client.get(
                 jina_url,
                 headers=headers,
-                timeout=timeout,
+                timeout=self._timeout,
             )
             status_code = response.status_code
 

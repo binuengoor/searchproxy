@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Literal
 
 import httpx
 from pydantic import BaseModel, Field
@@ -175,7 +174,7 @@ class FetchChain:
             log.info("ScraperAPI skipped: SCRAPERAPI_API_KEY not set")
 
         # All tiers exhausted
-        log.error("All fetch tiers exhausted for %s", url)
+        log.warning("All fetch tiers exhausted for %s", url)
         return FetchResult(
             success=False,
             url=url,

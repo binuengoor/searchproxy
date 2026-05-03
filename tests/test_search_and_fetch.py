@@ -67,23 +67,6 @@ async def test_compat_perplexity_returns_results(client: AsyncClient, mock_litel
 
 
 @pytest.mark.anyio
-async def test_v1_search_alias_returns_results(client: AsyncClient, mock_litellm_search: AsyncMock):
-    """POST /v1/search is an alias for /compat/perplexity."""
-    mock_litellm_search.return_value = SearchResponse(
-        results=[
-            SearchResult(title="Async guide", url="https://example.com/async", snippet="async intro"),
-        ]
-    )
-
-    resp = await client.post("/v1/search", json={"query": "async intro", "max_results": 3})
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["results"][0]["title"] == "Async guide"
-    mock_litellm_search.assert_awaited_once_with(query="async intro", max_results=3)
-
-
-@pytest.mark.anyio
 async def test_compat_perplexity_empty_on_error(client: AsyncClient, mock_litellm_search: AsyncMock):
     """Graceful degradation: a LiteLLM error returns empty results, not 500."""
     mock_litellm_search.return_value = SearchResponse(results=[])

@@ -112,8 +112,8 @@ class SearxngParams(BaseModel):
 # Service
 # ---------------------------------------------------------------------------
 
-# Categories that require a passthrough to upstream SearXNG.
-_MEDIA_CATEGORIES = frozenset(("images", "videos"))
+# Categories whose results carry media metadata and require SearXNG passthrough.
+MEDIA_CATEGORIES = frozenset(("images", "videos"))
 
 
 class SearxngCompatService:
@@ -133,10 +133,14 @@ class SearxngCompatService:
         self._litellm = litellm_client
         self._http = http_client
         self._settings = settings
+        self._timeout = httpx.Timeout(
+            timeout=float(settings.SEARCH_TIMEOUT),
+            connect=5.0,
+        )
 
     def _should_passthrough(self, params: SearxngParams) -> bool:
         """Return True when the request should be forwarded to upstream SearXNG."""
-        if params.categories and params.categories in _MEDIA_CATEGORIES:
+        if params.categories and params.categories in MEDIA_CATEGORIES:
             return True
         # Also passthrough for explicit media engines if upstream is configured.
         if params.engines:
@@ -182,16 +186,11 @@ class SearxngCompatService:
         if params.autocomplete:
             query_params["autocomplete"] = params.autocomplete
 
-        timeout = httpx.Timeout(
-            timeout=float(self._settings.SEARCH_TIMEOUT),
-            connect=5.0,
-        )
-
         try:
             response = await self._http.get(
                 self._settings.SEARXNG_URL,
                 params=query_params,
-                timeout=timeout,
+                timeout=self._timeout,
             )
             response.raise_for_status()
             data = response.json()

@@ -119,8 +119,8 @@ SearXNG consumers (n8n, LangChain, custom scripts) typically check for `result.g
 | CSV format | ❌ Not supported | Return `400` |
 | RSS format | ❌ Not supported | Return `400` |
 | Pagination (`pageno > 1`) | ⚠️ Ignored | LiteLLM has no pagination |
-| Image search (`categories=images`) | ⚠️ Ignored | Returns general web results |
-| Engine selection (`engines=...`) | ⚠️ Ignored | LiteLLM router controls this |
+| Image search (`categories=images`) | ✅ Passthrough | Forwarded to upstream SearXNG if `SEARXNG_URL` is configured. Otherwise, returns empty `results[]` (graceful degradation). |
+| Video search (`categories=videos`) | ✅ Passthrough | Same as images. Detected from `categories` or `engines` params. |
 
 ---
 

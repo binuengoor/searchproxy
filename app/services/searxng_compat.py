@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import Settings
 from app.services.litellm_search import LiteLLMSearchClient, SearchResponse
@@ -42,6 +42,20 @@ class SearxngResponse(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
     infoboxes: list[dict] = Field(default_factory=list)
     unresponsive_engines: list[str] = Field(default_factory=list)
+
+    # Accept SearXNG's weird list-of-lists format for unresponsive_engines
+    @field_validator("unresponsive_engines", mode="before")
+    @classmethod
+    def _flatten_unresponsive(cls, v: object) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        out: list[str] = []
+        for item in v:
+            if isinstance(item, str):
+                out.append(item)
+            elif isinstance(item, (list, tuple)) and item:
+                out.append(str(item[0]))
+        return out
 
 
 class SearxngParams(BaseModel):

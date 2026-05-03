@@ -43,6 +43,7 @@ All notable changes to SearchProxy will be documented in this file.
 
 ### Fixed
 - `/fetch` no longer returns raw undifferentiated HTML from anti-bot services. Previously the agent context was flooded with scripts, navbars, cookie banners, and inline SVG when the firebreak activated.
+- **SearXNG image/video passthrough stripped media metadata** — `img_src`, `thumbnail_src`, `resolution`, `source`, and other upstream SearXNG fields were discarded due to strict manual field mapping in `SearxngResult`. Fixed by enabling `extra="allow"` on the model and forwarding all raw fields during passthrough. HTML mode now renders thumbnails for media results.
 
 ## [0.2.0] — 2025-05-03
 

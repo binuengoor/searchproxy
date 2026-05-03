@@ -48,6 +48,7 @@
 - [x] `LOG_LEVEL` env var support in `app/main.py`
 - [x] DNS override in `docker-compose.yml` (public DNS for anti-bot API reachability)
 - [x] `SEARCHPROXY_REQUIRE_AUTH` + `LITELLM_API_KEY` added to `.env.example`
+- [x] **SearXNG media metadata passthrough fix** — `SearxngResult` now uses `extra="allow"`, preserving `img_src`, `thumbnail_src`, `resolution`, `source`, `filesize` from upstream. HTML mode renders thumbnails for media results.
 - [x] **Test suite: 27 passing tests (all endpoints):**
   - `tests/test_search_and_fetch.py` — 11 tests: search router + fetch chain service
   - `tests/test_searxng.py` — 6 tests: general search, images passthrough, videos passthrough, empty results, missing q (422), optional params

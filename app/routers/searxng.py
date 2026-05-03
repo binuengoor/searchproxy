@@ -52,18 +52,62 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 </html>"""
 
 
-def _render_html_results(query: str, results: list[SearxngResult], number_of_results: int) -> str:
-    """Build a simple HTML results page from a SearxngResponse."""
+# ---------------------------------------------------------------------------
+# HTML helpers
+# ---------------------------------------------------------------------------
+
+def _is_media_result(r: SearxngResult) -> bool:
+    """Return True if the result carries image or video metadata."""
+    return bool(getattr(r, "img_src", None) or getattr(r, "thumbnail_src", None))
+
+
+def _render_media_result(r: SearxngResult) -> str:
+    """Render a single image/video result as HTML with thumbnail."""
+    img_url = getattr(r, "img_src", None) or getattr(r, "thumbnail_src", None) or ""
+    meta_parts: list[str] = []
+    if getattr(r, "resolution", None):
+        meta_parts.append(f"Resolution: {r.resolution}")
+    if getattr(r, "source", None):
+        meta_parts.append(f"Source: {r.source}")
+    meta_str = " · ".join(meta_parts) if meta_parts else ""
+    return (
+        f'<article class="result media">\n'
+        f'  <img src="{img_url}" alt="{r.title}" loading="lazy" '
+        f'       style="max-width:200px;max-height:200px;" '
+        f'       onerror="this.style.display=\'none\'">\n'
+        f'  <h3><a href="{r.url}">{r.title}</a></h3>\n'
+        f'  <p class="url">{r.url}</p>\n'
+        f'  <p class="meta">{meta_str}</p>\n'
+        f'  <p class="engine">Source: {r.engine}</p>\n'
+        f'</article>\n'
+    )
+
+
+def _render_web_result(r: SearxngResult) -> str:
+    """Render a single general/web result as HTML."""
+    return (
+        f'<article class="result">\n'
+        f'  <h3><a href="{r.url}">{r.title}</a></h3>\n'
+        f'  <p class="url">{r.url}</p>\n'
+        f'  <p class="content">{r.content}</p>\n'
+        f'  <p class="engine">Source: {r.engine}</p>\n'
+        f'</article>\n'
+    )
+
+
+def _render_html_results(
+    query: str,
+    results: list[SearxngResult],
+    number_of_results: int,
+    category: str | None = None,
+) -> str:
+    """Build a simple HTML results page from a SearxngResponse.
+
+    Renders media thumbnails when ``img_src`` or ``thumbnail_src`` are present.
+    """
     rows = ""
     for r in results:
-        rows += (
-            f'<article class="result">\n'
-            f'  <h3><a href="{r.url}">{r.title}</a></h3>\n'
-            f'  <p class="url">{r.url}</p>\n'
-            f'  <p class="content">{r.content}</p>\n'
-            f'  <p class="engine">Source: {r.engine}</p>\n'
-            f'</article>\n'
-        )
+        rows += _render_media_result(r) if _is_media_result(r) else _render_web_result(r)
     return _HTML_TEMPLATE.format(query=query, count=number_of_results, rows=rows)
 
 
@@ -164,6 +208,7 @@ async def _handle_searxng(
             query=q,
             results=result.results,
             number_of_results=result.number_of_results,
+            category=categories,
         )
         return Response(content=html, media_type="text/html")
 

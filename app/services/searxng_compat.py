@@ -12,15 +12,52 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# SearXNG result normalization helpers
+# ---------------------------------------------------------------------------
+
+# Fields that SearXNG may return as ``null`` instead of missing — Pydantic ``str``
+# rejects ``None``, so we coalesce to sensible defaults.
+_SearxngResult_DEFAULTS: dict[str, object] = {
+    "title": "",
+    "url": "",
+    "content": "",
+    "engine": "searxng",
+    "score": 0.0,
+    "category": "general",
+}
+
+
+def _normalize_searxng_result(raw: dict[str, object]) -> SearxngResult:
+    """Coalesce ``None`` values to defaults and validate through Pydantic.
+
+    Because ``SearxngResult`` sets ``extra='allow'``, every upstream field
+    (``img_src``, ``thumbnail_src``, ``resolution``, …) is preserved without
+    an explicit allow-list.
+    """
+    # Start with a shallow copy so we don't mutate the upstream payload.
+    payload = dict(raw)
+    for key, default in _SearxngResult_DEFAULTS.items():
+        if payload.get(key) is None:
+            payload[key] = default
+    return SearxngResult.model_validate(payload)
+
+
+# ---------------------------------------------------------------------------
 # SearXNG response models
 # ---------------------------------------------------------------------------
 
 
 class SearxngResult(BaseModel):
-    """A single result in the SearXNG JSON format."""
+    """A single result in the SearXNG JSON format.
 
-    title: str
-    url: str
+    Supports extra fields from upstream SearXNG (e.g. ``img_src``,
+    ``thumbnail_src`` for media results) via ``extra='allow'``.
+    """
+
+    model_config = {"extra": "allow"}
+
+    title: str = ""
+    url: str = ""
     content: str = ""
     engine: str = "unknown"
     score: float = 0.0
@@ -181,17 +218,11 @@ class SearxngCompatService:
                 unresponsive_engines=["searxng"],
             )
 
-        # Forward the raw SearXNG JSON as-is, renaming key fields to match our model.
+        # Forward the raw SearXNG JSON as-is, preserving all extra fields
+        # (img_src, thumbnail_src, resolution, etc.) while safely handling None.
         raw_results = data.get("results", [])
         results = [
-            SearxngResult(
-                title=r.get("title", ""),
-                url=r.get("url", ""),
-                content=r.get("content", ""),
-                engine=r.get("engine", "searxng"),
-                score=r.get("score", 0.0),
-                category=r.get("category", "general"),
-            )
+            _normalize_searxng_result(r)
             for r in raw_results
             if isinstance(r, dict)
         ]

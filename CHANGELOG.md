@@ -24,6 +24,19 @@ All notable changes to SearchProxy will be documented in this file.
 - `GET /` root redirect to `/docs` for zero-config browser-based API testing and phone health checks.
 - Comprehensive ARCHITECTURE.md with design constraints, endpoint matrix, fetch chain diagram, and decision rationale.
 
+## [0.2.0] — Unreleased
+
+### Added
+- `POST /compat/firecrawl/scrape` — Firecrawl v2-compatible scrape endpoint.
+  - Thin wrapper around existing `/fetch` chain (Crawl4AI → Jina → anti-bot firebreak).
+  - Accepts full Firecrawl request schema (`url`, `formats`, `timeout`, `actions`, `location`, etc.).
+  - Unsupported params (`actions`, `location`, `mobile`, `includeTags`, `excludeTags`, etc.) accepted and logged as ignored — no client-side changes required.
+  - Returns Firecrawl-shaped JSON: `{"success": true, "data": {"markdown": "...", "metadata": {...}}}`.
+  - Auth via existing Bearer token middleware (no new auth logic).
+- `app/services/firecrawl_compat.py` — pure formatting mapper, no HTTP calls.
+- `app/routers/firecrawl.py` — thin router following existing convention (<100 lines).
+- `tests/test_firecrawl.py` — 6 tests covering success, failure, ignored params, missing url, auth required, auth rejected.
+
 ### Architecture
 - No custom search provider rotation — delegated entirely to LiteLLM router.
 - No FlareSolverr — Crawl4AI's undetected browser + stealth modes replace brute-force headless.

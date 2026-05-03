@@ -90,6 +90,12 @@
 - [x] **Vane SearXNG integration fix** — added `/compat/searxng/search` sub-endpoint (Vane calls this path internally)
 - [x] **HTML format support** — `/compat/searxng?format=html` returns a simple styled HTML results page; media queries (images/videos) passthrough raw upstream SearXNG HTML
 - [x] **`.env` kept untracked** — real API keys never committed to git history
+- [x] **Firecrawl v2 scrape compat** — `POST /compat/firecrawl/scrape`
+  - Thin wrapper around existing fetch chain (Crawl4AI → Jina → anti-bot firebreak)
+  - Accepts full Firecrawl request schema; unsupported params accepted and logged as ignored
+  - Returns Firecrawl-shaped JSON: `{"success": true, "data": {"markdown": "...", "metadata": {...}}}`
+  - Auth via existing Bearer token middleware
+  - `tests/test_firecrawl.py` — 6 tests, all passing
 
 ## Known Issues / Limitations (from live test)
 - [ ] `/vane` with long research queries can take 2+ minutes — Vane backend timeout, not searchproxy. Consider increasing `VANE_TIMEOUT` beyond 120s for `comprehensive` depth.
@@ -132,6 +138,8 @@
 
 ## Backlog (Future)
 - [ ] Add Jina Reranker post-processing for search results
+- [ ] Add `/compat/firecrawl/crawl` endpoint (recursive link following — deferred to Phase 5+)
+- [ ] Add `/compat/firecrawl/map` endpoint (URL discovery without content extraction — deferred)
 - [ ] CI/CD with GitHub Actions (lint, type-check, test)
 - [ ] Open WebUI skill prompt A/B testing
 - [ ] **Security**: `.env` contains real API keys (Jina, Scrape.do, ScraperAPI). File is git-ignored but was committed before ignore rule. Consider `git filter-repo` to scrub `.env` from history if repo goes public.

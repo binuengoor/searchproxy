@@ -35,6 +35,7 @@ Pydantic (validation)
 | `/compat/searxng` | GET | SearXNG JSON compatibility. Image/video passthrough to upstream SearXNG when configured. |
 | `/vane` | POST | Deep research proxy to Vane. Input: query + optional depth/breadth. Output: synthesized report with inline citations. Supports streaming (`?stream=true`). |
 | `/fetch` | POST | Fetch a single URL. Runs Crawl4AI → Jina Reader → anti-bot firebreak. |
+| `/compat/firecrawl/scrape` | POST | Firecrawl v2-compatible scrape. Wraps the same fetch chain; accepts full Firecrawl request schema. Unsupported params are accepted and ignored. |
 
 ## Environment Configuration
 

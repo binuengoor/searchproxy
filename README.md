@@ -7,7 +7,9 @@ Self-hosted web search gateway. Thin relay to a LiteLLM router for search, multi
 | Endpoint | Purpose |
 |----------|---------|
 | `/compat/perplexity` | Perplexity-compatible search relay through LiteLLM |
-| `/compat/searxng` | SearXNG JSON-compatible search. Routes web to LiteLLM, images/video to SearXNG passthrough |
+| `/v1/search` | OpenAI-compatible alias for `/compat/perplexity` |
+| `/compat/searxng` | SearXNG JSON-compatible search. Routes web to LiteLLM, images/video to SearXNG passthrough. Supports `?format=json` (default) and `?format=html` |
+| `/compat/searxng/search` | Vane-compatible subpath for SearXNG search |
 | `/vane` | Deep research. Proxy to Vane with streaming support (`?stream=true`) |
 | `/fetch` | Fetch any URL as markdown/text. Crawl4AI → Jina Reader → anti-bot firebreak |
 | `/health` | Liveness check |
@@ -76,6 +78,7 @@ All via environment variables (see `.env.example`):
 - Each service is independent. No service imports another.
 - Config lives in `app/config.py` only. No `os.environ` scattered in code.
 - Stateless. Only in-memory credit counters for Scrape.do / ScraperAPI (reset on restart).
+- MCP is **not** implemented natively. Tools are exposed via the OpenAPI spec and can be consumed by any MCP gateway (e.g. MCPHub) that supports OpenAPI ingestion.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for full design docs, best practices, and decisions.
 

@@ -204,7 +204,17 @@ searchproxy/
 
 ## MCP Server (Phase 2)
 
-After the HTTP API is stable, an `mcp_server.py` can expose the same endpoints through the Model Context Protocol via stdio or SSE. The MCP layer will import the same `services/` modules and call the same business logic.
+SearchProxy does not expose a native MCP server. Instead, it serves a fully dereferenced OpenAPI 3.0 spec at `/openapi.json`. This allows any MCP gateway that supports OpenAPI ingestion (e.g. MCPHub) to auto-discover and route tools without a custom MCP implementation.
+
+**MCPHub configuration example:**
+```yaml
+# tools.yaml snippet
+- name: searchproxy
+  type: openapi
+  url: https://searchproxy.home.askbp.win/openapi.json
+```
+
+This approach replaces the need for a dedicated `mcp_server.py` module.
 
 ## Best Practices
 

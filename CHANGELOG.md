@@ -34,7 +34,7 @@ All notable changes to SearchProxy will be documented in this file.
 ## Planned
 
 ### 0.2.0
-- MCP server layer (`mcp_server.py`) exposing `perplexity_search`, `fetch`, `vane_research` tools via stdio/SSE.
+- ~~MCP server layer (`mcp_server.py`) exposing tools via stdio/SSE~~ — **Replaced by OpenAPI spec ingestion via MCPHub**. The fully dereferenced OpenAPI 3.0 spec at `/openapi.json` is the integration point; no native MCP server needed.
 - Health check and metrics endpoints (`/health`, `/metrics`).
 - Structured logging with correlation IDs across async requests.
 - Add `max_results` client-side slicing after LiteLLM response normalization.

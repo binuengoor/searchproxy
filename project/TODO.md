@@ -125,7 +125,7 @@
   - [ ] `tests/test_auth.py` — auth middleware (`require_auth=true`, invalid token, missing header, excluded paths)
   - [ ] `tests/test_openapi.py` — assert all 5 endpoints present in `/openapi.json`
   - [ ] Rename `tests/test_search_and_fetch.py` → `tests/test_search_and_fetch_chain.py` for clarity
-- [ ] **MCP server layer** (`mcp_server.py` via stdio + SSE) — architecture-only, no implementation
+- [x] ~~**MCP server layer**~~ (`mcp_server.py` via stdio + SSE) — **REVERSED**: OpenAPI spec serves as the MCP integration point. No native MCP server needed.
 - [ ] Add `/metrics` endpoint with Prometheus-style output
 - [ ] Structured logging with JSON formatter + correlation_id
 - [ ] Response caching (HTTP cache headers or Redis)

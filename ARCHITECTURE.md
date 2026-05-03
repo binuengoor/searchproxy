@@ -177,7 +177,11 @@ searchproxy/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── pyproject.toml
-└── project/                 ← Gitignored working directory
+├── open-webui/
+│   ├── skill.md             ← Behavioral guidance: when to call each endpoint
+│   ├── prompt.md              ← System prompt preset for Native/Agentic Mode
+│   └── README.md              ← Setup guide: OpenAPI connection + skill attachment
+└── project/                   ← Gitignored working directory
     ├── TODO.md              ← Current tasks and progress
     ├── DECISIONS.md         ← Design decisions and rationale
     └── CHANGELOG_WORKING.md ← Draft release notes
@@ -362,3 +366,26 @@ These rules keep the codebase readable and safe to refactor six months from now.
 | Jina Reader included even though `r.jina.ai` is free | With API key, rate limits go from 20 RPM → 500 RPM. Future-proofing for Jina Reranker etc. |
 | No FlareSolverr | Crawl4AI's undetected browser + stealth modes handle Cloudflare better than brute-force headless. |
 | No `000-index.md` or hub files | Navigates via file explorer / quick switcher per project convention. |
+
+## Open WebUI Integration
+
+Open WebUI discovers searchproxy tools automatically via its **OpenAPI (Function) Server** connection type. No custom Python tool file is needed. The model receives endpoint signatures, parameter types, and descriptions directly from the auto-generated `/openapi.json` spec.
+
+### Connection Setup
+
+Admin Panel → Settings → Connections → Add Connection → OpenAPI (Function) Server:
+- **URL:** `http://<searchproxy-host>:<port>/openapi.json`
+- **Auth:** Bearer token via `Authorization: Bearer <SEARCHPROXY_API_KEY>` header
+- searchproxy auto-generates the spec from FastAPI; all endpoints appear as auto-discovered tools
+
+### Supporting Files (`open-webui/`)
+
+Three files guide the model's *behavior*, not its plumbing:
+
+| File | Purpose |
+|------|---------|
+| `skill.md` | Defines *when* to call which endpoint: quick lookup (`/compat/perplexity`), deep research (`/vane`), or fetch a URL (`/fetch`). |
+| `prompt.md` | System prompt preset establishing the model's identity as a research assistant using searchproxy endpoints. |
+| `README.md` | User-facing setup guide: connect the OpenAPI server, attach the skill, and enable Native/Agentic Mode. |
+
+**No custom tool file is maintained.** OpenAP I provides full auto-discovery of endpoints, parameters, and return schemas.

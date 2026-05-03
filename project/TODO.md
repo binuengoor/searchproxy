@@ -66,6 +66,28 @@
   - Auth middleware ✅ (`require_auth=true` blocks missing/wrong tokens on all routes; `/health`, `/docs`, `/openapi.json`, `/redoc` remain open)
 - [x] **Git history scrubbed** with `git filter-repo` to remove `10.1.1.150` internal IP from all commits
 - [x] `docker-compose.yml` comment fixed after filter-repo collateral
+- [x] **End-to-end live test — ALL 22 checks pass:**
+  - 1. `/health` = `{"status":"ok"}` ✅
+  - 2. OpenAPI has all 5 endpoints ✅
+  - 3. `/docs` = 200 ✅
+  - 4. `/redoc` = 200 ✅
+  - 5. `/compat/perplexity` returns 5 results ✅
+  - 6. `/v1/search` (alias) returns 3 results ✅
+  - 7. `/compat/searxng?q=python` returns 10 results ✅
+  - 8. `/compat/searxng?categories=images` returns **370 results** ✅ (SearXNG passthrough working)
+  - 9. `/compat/searxng?categories=videos` returns **92 results** ✅ (SearXNG passthrough working)
+  - 10. `/vane` sync returns 3205-char report ✅
+  - 11. `/vane?stream=true` returns 13496-char stream ✅
+  - 12. `/fetch` example.com via Crawl4AI ✅
+  - 13. `/fetch` nitter.net via Jina (anti-bot fallback) ✅
+  - 14-17. Auth excluded paths (`/health`, `/docs`, `/openapi.json`, `/compat/perplexity` with `require_auth=false`) all return 200 ✅
+  - 18-20. Missing params return 422 (`searxng` missing `q`, `fetch` missing `url`, `vane` missing `query`) ✅
+  - 21. `/mcp` returns 404 (not implemented, expected) ✅
+- [x] **SearXNG fixes applied:**
+  - `app/main.py`: `httpx.AsyncClient(follow_redirects=True)` to handle upstream HTTP 308 redirects
+  - `.env.example`: `SEARXNG_URL` now includes `/search` suffix to avoid redirect
+  - `app/services/searxng_compat.py`: `field_validator` for `unresponsive_engines` handles SearXNG's list-of-lists format `[['brave.images','Suspended: too many requests'],...]` which caused Pydantic 500 errors
+- [x] **`.env` kept untracked** — real API keys never committed to git history
 
 ## Known Issues / Limitations (from live test)
 - [ ] `/vane` with long research queries can take 2+ minutes — Vane backend timeout, not searchproxy. Consider increasing `VANE_TIMEOUT` beyond 120s for `comprehensive` depth.
@@ -75,14 +97,15 @@
 - [ ] Jina Reader API key is active and working; Scrape.do and ScraperAPI keys are also active (confirmed via anti-bot escalation test).
 
 ## In Progress
-- [ ] Validate `.env` file completeness and connectivity for all upstream services
+- [x] Validate `.env` file completeness and connectivity for all upstream services ✅
 
 ## Backlog (Phase 3 — Deploy)
-- [ ] Deploy to ai-agents host (Docker)
+- [ ] Deploy to ai-agents host (Docker) — blocked on GitHub auth
 - [ ] Configure Open WebUI OpenAPI connection
 - [ ] Test end-to-end: Open WebUI → searchproxy → LiteLLM → web search
 - [ ] Test end-to-end: Open WebUI → searchproxy → Vane → deep research
 - [ ] Test end-to-end: Open WebUI → searchproxy → Crawl4AI → fetch
+- [ ] Push to GitHub (needs user PAT/SSH key auth setup)
 
 ## Backlog (Phase 4 — Enhance)
 - [x] **Router tests complete** (27 passing):

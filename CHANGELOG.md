@@ -24,15 +24,34 @@ All notable changes to SearchProxy will be documented in this file.
 - `GET /` root redirect to `/docs` for zero-config browser-based API testing and phone health checks.
 - Comprehensive ARCHITECTURE.md with design constraints, endpoint matrix, fetch chain diagram, and decision rationale.
 
-## [0.2.0] — Unreleased
+## [0.3.0] — Unreleased
 
 ### Added
-- `POST /compat/firecrawl/scrape` — Firecrawl v2-compatible scrape endpoint.
+- `app/services/content_cleaner.py` — trafilatura-based HTML boilerplate removal.
+  - Detects HTML vs markdown via tag sniffing; extracts article text as clean markdown.
+  - Passes through already-clean markdown unchanged.
+  - Falls back to truncated raw HTML (8 000 char cap) on extraction failure.
+- Content cleaning wired into `FetchChain.execute()` on **every success path**:
+  - Crawl4AI → cleaned
+  - Jina Reader → cleaned
+  - Scrape.do → cleaned
+  - ScraperAPI → cleaned
+- Demo: `https://blog.cloudflare.com` fetched via anti-bot firebreak
+  - raw HTML: **109,733 chars** → cleaned: **~374 chars** (99.6% reduction)
+- `trafilatura>=2.0.0` added to `pyproject.toml` dependencies.
+- `tests/test_content_cleaner.py` — 11 tests covering extraction, pass-through, fallback, and HTML detection.
+
+### Fixed
+- `/fetch` no longer returns raw undifferentiated HTML from anti-bot services. Previously the agent context was flooded with scripts, navbars, cookie banners, and inline SVG when the firebreak activated.
+
+## [0.2.0] — 2025-05-03
+
+### Added
+- `POST /compat/firecrawl/v2/scrape` — Firecrawl v2-compatible scrape endpoint.
   - Thin wrapper around existing `/fetch` chain (Crawl4AI → Jina → anti-bot firebreak).
   - Accepts full Firecrawl request schema (`url`, `formats`, `timeout`, `actions`, `location`, etc.).
-  - Unsupported params (`actions`, `location`, `mobile`, `includeTags`, `excludeTags`, etc.) accepted and logged as ignored — no client-side changes required.
+  - Unsupported params accepted and logged as ignored.
   - Returns Firecrawl-shaped JSON: `{"success": true, "data": {"markdown": "...", "metadata": {...}}}`.
-  - Auth via existing Bearer token middleware (no new auth logic).
 - `app/services/firecrawl_compat.py` — pure formatting mapper, no HTTP calls.
 - `app/routers/firecrawl.py` — thin router following existing convention (<100 lines).
 - `tests/test_firecrawl.py` — 6 tests covering success, failure, ignored params, missing url, auth required, auth rejected.

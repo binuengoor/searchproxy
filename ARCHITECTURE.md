@@ -108,13 +108,13 @@ User requests POST /fetch {"url": "https://example.com"}
 ```
 
 ```
-User requests /fetch?url=<URL>
+User requests POST /fetch {"url": "https://..."}
 │
 ▼
 1. Crawl4AI (self-hosted, primary)
-   Endpoint: POST /md for plain markdown fetch (fast, clean)
-   Endpoint: POST /crawl with extraction_config only for structured LLM extraction (slower)
-   ├── Success → return markdown + metadata
+   ├── Success
+   │   ├── Content Cleaner  ──► trafilatura extracts article text
+   │   └── Return clean markdown + metadata
    └── Failure
        ├── Is 403 / Cloudflare / anti-bot indicator?
        │   → Skip Jina (it can't bypass anti-bot)
@@ -122,23 +122,20 @@ User requests /fetch?url=<URL>
        │
        └── Other error (5xx, timeout, DNS)
            → Go to Jina Reader
-           │   ├── Success → return markdown
+           │   ├── Success
+           │   │   ├── Content Cleaner
+           │   │   └── Return clean markdown
            │   └── Failure / Is anti-bot block?
            │       → Go to Anti-Bot Firebreak
            │
 ▼
-2. Jina Reader (free cloud backup)
-   Only reached for general failures (not anti-bot blocks)
-   Returns clean markdown for most pages
-│
-▼
-3. Anti-Bot Firebreak (quarantined credits)
+2. Anti-Bot Firebreak (quarantined credits)
    Only reached for confirmed anti-bot blocks
    Priority: Scrape.do → ScraperAPI
-   Never used for routine fetches
-│
-▼
-Error (all tiers exhausted)
+   ├── Success
+   │   ├── Content Cleaner  ──► strips scripts, navbars, cookie banners
+   │   └── Return clean markdown
+   └── Failure → Error (all tiers exhausted)
 ```
 
 ### Anti-Bot Detection

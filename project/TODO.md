@@ -102,7 +102,7 @@
 - [ ] `/vane` streaming endpoint (`?stream=true`) yields init handshake but chunk parsing may need client-side SSE handling (Vane returns server-sent events, not plain text chunks).
 - [ ] `/compat/searxng` image/video passthrough: when SearXNG has no results, returns `count: 0` correctly, but client may want a clearer "no images found" message.
 - [ ] `FETCH_TIMEOUT=30` is adequate for most pages, but anti-bot firebreak can add cumulative latency. Consider per-tier timeouts.
-- [ ] Jina Reader API key is active and working; Scrape.do and ScraperAPI keys are also active (confirmed via anti-bot escalation test).
+- [x] ~~`/fetch` returns raw HTML from anti-bot firebreak (no content extraction)~~ — **FIXED 0.3.0** ✅ trafilatura content cleaner strips boilerplate from all success paths.
 
 ## In Progress
 - [x] Validate `.env` file completeness and connectivity for all upstream services ✅

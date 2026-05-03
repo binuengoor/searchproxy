@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
     "python-dotenv>=1.0.0",
+    "trafilatura>=1.12.0",
 ]
 
 [project.optional-dependencies]

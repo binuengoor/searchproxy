@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.config import Settings
+from app.services.content_cleaner import clean_content
 from app.services.crawl4ai import Crawl4AIClient, FetchResult
 from app.services.jina_reader import JinaReaderClient
 from app.services.scraperapi import ScraperAPIClient
@@ -65,19 +66,23 @@ class FetchChain:
 
         Flow:
         1. Crawl4AI.fetch_markdown — primary
-           ├── Success → return
+           ├── Success → return (cleaned)
            └── Failure
                ├── Is anti-bot block? → skip Jina, go to firebreak
                └── Other error → Jina Reader
-                   ├── Success → return
+                   ├── Success → return (cleaned)
                    └── Failure / is anti-bot? → firebreak
 
         Anti-Bot Firebreak:
         1. Scrape.do (if key set)
-           ├── Success → return
+           ├── Success → return (cleaned)
            └── Failure → ScraperAPI (if key set)
-               ├── Success → return
+               ├── Success → return (cleaned)
                └── Failure → all tiers exhausted
+
+        Content cleaning: every successful result is passed through
+        :func:`clean_content` so raw HTML from firebreak tiers is
+        reduced to agent-friendly markdown.
 
         Args:
             url: The target URL to fetch.
@@ -98,6 +103,7 @@ class FetchChain:
                 )
                 return await self._firebreak(url)
             log.info("Crawl4AI succeeded for %s", url)
+            result.markdown = clean_content(result.markdown, url=url)
             return result
 
         # Crawl4AI failed — determine if it's an anti-bot block
@@ -122,6 +128,7 @@ class FetchChain:
                 )
                 return await self._firebreak(url)
             log.info("Jina Reader succeeded for %s", url)
+            jina_result.markdown = clean_content(jina_result.markdown, url=url)
             return jina_result
 
         # Jina failed — only firebreak for confirmed anti-bot blocks
@@ -149,7 +156,8 @@ class FetchChain:
         if self._settings.SCRAPE_DO_API_KEY:
             scrape_do_result = await self._scrape_do.fetch(url)
             if scrape_do_result.success:
-                log.info("Scrape.do succeeded for %s", url)
+                scrape_do_result.markdown = clean_content(scrape_do_result.markdown, url=url)
+                log.info("Scrape.do succeeded for %s after cleaning", url)
                 return scrape_do_result
             log.warning("Scrape.do failed for %s, trying ScraperAPI", url)
         else:
@@ -159,7 +167,8 @@ class FetchChain:
         if self._settings.SCRAPERAPI_API_KEY:
             scraper_api_result = await self._scraper_api.fetch(url)
             if scraper_api_result.success:
-                log.info("ScraperAPI succeeded for %s", url)
+                scraper_api_result.markdown = clean_content(scraper_api_result.markdown, url=url)
+                log.info("ScraperAPI succeeded for %s after cleaning", url)
                 return scraper_api_result
             log.warning("ScraperAPI failed for %s", url)
         else:

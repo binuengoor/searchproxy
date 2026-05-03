@@ -6,10 +6,6 @@ services:
       - "8080:8080"
     env_file:
       - .env
-    environment:
-      # Override: bind to all interfaces inside the container
-      - UVICORN_HOST=0.0.0.0
-      - UVICORN_PORT=8080
     restart: unless-stopped
     # Optional: use host network if upstream services (upstream-host) are unreachable
     # from the default bridge. Uncomment on Linux hosts only.

@@ -16,7 +16,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- Core ---
+    SEARCHPROXY_REQUIRE_AUTH: bool = Field(default=False)
     SEARCHPROXY_API_KEY: str = "change-me-in-production"
+
+    # --- (rest of settings unchanged) ---
 
     # --- Compat: Perplexity / OpenAI ---
     LITELLM_SEARCH_URL: str = Field(default="http://litellm-host:4000/search/unifiedsearch")
@@ -52,7 +55,7 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        if self.SEARCHPROXY_API_KEY == "change-me-in-production":
+        if self.SEARCHPROXY_REQUIRE_AUTH and self.SEARCHPROXY_API_KEY == "change-me-in-production":
             logger.warning(
                 "SEARCHPROXY_API_KEY is still set to the default value. "
                 "Set a secure key in production."

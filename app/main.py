@@ -53,7 +53,10 @@ EXCLUDED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc"}
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next: object) -> JSONResponse:
-    """Require Bearer token on all routes except exclusions."""
+    """Require Bearer token on all routes if SEARCHPROXY_REQUIRE_AUTH is enabled."""
+    if not settings.SEARCHPROXY_REQUIRE_AUTH:
+        return await call_next(request)  # type: ignore[return-value]
+
     if request.url.path in EXCLUDED_PATHS:
         return await call_next(request)  # type: ignore[return-value]
 

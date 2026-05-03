@@ -27,6 +27,10 @@ def get_client() -> httpx.AsyncClient:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage httpx client lifecycle across startup/shutdown."""
     global _client
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     log.info("Starting searchproxy")
     _client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
     yield

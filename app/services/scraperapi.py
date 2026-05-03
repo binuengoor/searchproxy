@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from urllib.parse import quote
 
 import httpx
-from pydantic import BaseModel, Field
 
 from app.config import Settings
 from app.services.crawl4ai import FetchResult
@@ -97,10 +97,11 @@ class ScraperAPIClient:
             connect=5.0,
         )
 
+        encoded_url = quote(url, safe="")
         scrape_url = (
             f"https://api.scraperapi.com/"
             f"?api_key={self._settings.SCRAPERAPI_API_KEY}"
-            f"&url={url}"
+            f"&url={encoded_url}"
         )
 
         try:

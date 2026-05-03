@@ -43,7 +43,7 @@ class JinaReaderClient:
             connect=5.0,
         )
 
-        jina_url = f"https://r.jina.ai/http://{url}"
+        jina_url = f"https://r.jina.ai/{url}"
         headers: dict[str, str] = {}
         if self._settings.JINA_API_KEY:
             headers["Authorization"] = f"Bearer {self._settings.JINA_API_KEY}"

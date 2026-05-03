@@ -108,16 +108,20 @@ class FetchChain:
             log.info("Jina Reader succeeded for %s", url)
             return jina_result
 
-        # Jina failed — check if it's an anti-bot block
+        # Jina failed — only firebreak for confirmed anti-bot blocks
         if self._is_anti_bot(jina_result):
             log.warning(
                 "Jina Reader failed with %s — anti-bot detected, escalating to firebreak",
                 jina_result.status_code,
             )
-        else:
-            log.warning("Jina Reader failed for %s (not anti-bot), escalating to firebreak", url)
+            return await self._firebreak(url)
 
-        return await self._firebreak(url)
+        # Not anti-bot — all public tiers exhausted, return failure directly
+        log.info(
+            "Jina Reader failed for %s (not anti-bot) — all tiers exhausted",
+            url,
+        )
+        return jina_result
 
     async def _firebreak(self, url: str) -> FetchResult:
         """Execute the anti-bot firebreak: Scrape.do → ScraperAPI.

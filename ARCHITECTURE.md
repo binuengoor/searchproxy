@@ -4,10 +4,11 @@ Self-hosted web search and content fetch gateway. Thin relay to LiteLLM search r
 
 ## Purpose
 
-- **Search:** Relay queries through a LiteLLM search router for cross-provider load balancing.
 - **Fetch:** Retrieve web page content through a priority chain: self-hosted Crawl4AI → Jina Reader → anti-bot specialists (Scrape.do, ScraperAPI) reserved only for Cloudflare-protected sites.
-- **Research:** Transparent proxy to Vane deep-research service.
-- **Compat:** Bridge to SearXNG JSON format for tools and scripts expecting that schema.
+- **Vane:** Transparent proxy to Vane deep-research service.
+- **Compat:** Compatibility bridges for external API formats:
+    - `/compat/perplexity` — Perplexity/OpenAI-style search responses (thin relay to LiteLLM).
+    - `/compat/searxng` — SearXNG JSON format. Supports optional image/video passthrough to upstream SearXNG.
 
 ## Design Constraints
 
@@ -29,32 +30,35 @@ Pydantic (validation)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/search` | POST | Thin relay to LiteLLM search router. Normalizes query + max_results. |
-| `/v1/search` | POST | Alias for `/search` (OpenAI-compatible naming). |
-| `/compat/searxng` | GET | Convert SearXNG query params → LiteLLM search → normalize to SearXNG JSON. |
-| `/research` | POST | Proxy request to Vane deep-research endpoint. Passthrough. |
+| `/compat/perplexity` | POST | Thin relay to LiteLLM search router. Perplexity-compatible responses. |
+| `/v1/search` | POST | Alias for `/compat/perplexity` (OpenAI-compatible naming). |
+| `/compat/searxng` | GET | SearXNG JSON compatibility. Image/video passthrough to upstream SearXNG when configured. |
+| `/vane` | POST | Deep research proxy to Vane. Input: query + optional depth/breadth. Output: synthesized report with inline citations. Supports streaming (`?stream=true`). |
 | `/fetch` | POST | Fetch a single URL. Runs Crawl4AI → Jina Reader → anti-bot firebreak. |
 
 ## Environment Configuration
 
 ```bash
-# --- Search ---
+# --- Compat: Perplexity / OpenAI search ---
 LITELLM_SEARCH_URL=http://upstream-host:4000/search/unifiedsearch
 
-# --- Research (Vane) ---
+# --- Vane deep research ---
 VANE_URL=http://upstream-host:3001
-VANE_CHAT_PROVIDER_ID=29a86a6a-721c-414f-bb0b-67a4f5a2d8fc
-VANE_CHAT_MODEL_KEY=opencode-go/mimo-v2-omni
-VANE_EMBED_PROVIDER_ID=481e7ec6-873e-4e8d-ad58-e49b214d8729
-VANE_EMBED_MODEL_KEY=text-embedding-3-small
+VANE_CHAT_PROVIDER_ID=
+VANE_CHAT_MODEL_KEY=
+VANE_EMBED_PROVIDER_ID=
+VANE_EMBED_MODEL_KEY=
+
+# --- Compat: SearXNG passthrough (optional; enables image/video categories) ---
+SEARXNG_URL=http://upstream-host:8980
 
 # --- Fetch: Crawl4AI (self-hosted) ---
 CRAWL4AI_URL=http://localhost:11235
 
-# --- Fetch: Jina Reader (free tier; unlimited, optional key for higher limits) ---
+# --- Fetch: Jina Reader (optional key for higher rate limits) ---
 JINA_API_KEY=
 
-# --- Fetch: Anti-bot specialists (only for Cloudflare/anti-bot blocks) ---
+# --- Fetch: Anti-bot specialists (quarantined) ---
 SCRAPE_DO_API_KEY=
 SCRAPERAPI_API_KEY=
 ```
@@ -62,6 +66,32 @@ SCRAPERAPI_API_KEY=
 All keys are optional. If missing, the associated fetch tier is simply skipped.
 
 ## Fetch Chain
+
+**API Standard:** `/fetch` behaves like a standard web page fetcher — input is a URL, output is markdown/plain text with metadata. Comparable to `r.jina.ai/http://<URL>` or `firecrawl.dev`. Supports `?format=markdown|text|html`.
+
+### API Standards
+
+| Endpoint | Standard Comparable To | Input | Output |
+|----------|------------------------|-------|--------|
+| `/compat/perplexity` | Perplexity API, OpenAI `/v1/search` | `{"query": "...", "max_results": 10}` | `{"results": [...]}` with title, url, snippet |
+| `/compat/searxng` | SearXNG JSON API (`?format=json`) | Query params: `q`, `categories`, `engines`, etc. | Standard SearXNG JSON with `results`, `answers`, `suggestions`, `infoboxes` |
+| `/vane` | Vane, Perplexity, Jina DeepSearch | `{"query": "...", "depth": "balanced"}` | Synthesized report with inline citations. Streams when `?stream=true` |
+| `/fetch` | `r.jina.ai`, Firecrawl | `{"url": "https://..."}` or `?url=...` | Markdown/text + metadata |
+
+### Image/Video Passthrough for `/compat/searxng`
+
+SearXNG supports `categories=images` and `categories=videos`, but LiteLLM search routers handle web search only.
+
+**Behavior:**
+- `categories=general` (default) or any unrecognized category: route through LiteLLM, return web results in SearXNG format.
+- `categories=images`, `categories=videos`, or engines like `bing images`, `youtube`: if `SEARXNG_URL` is configured, passthrough directly to the upstream SearXNG instance. Return raw SearXNG JSON (including `results[]` with image/video URLs, thumbnails, etc.).
+- If `SEARXNG_URL` is not set, return empty `results[]` for media categories. This is graceful degradation — clients see zero results, not an error.
+
+This keeps `/compat/searxng` functionally equivalent to a real SearXNG instance for all verticals Vane already uses. The passthrough is ~20 lines of code and adds zero operational complexity.
+
+```
+User requests POST /fetch {"url": "https://example.com"}
+```
 
 ```
 User requests /fetch?url=<URL>
@@ -128,8 +158,9 @@ searchproxy/
 │   ├── config.py            ← Pydantic Settings from env
 │   ├── routers/
 │   │   ├── __init__.py
-│   │   ├── search.py        ← /search, /v1/search, /compat/searxng
-│   │   ├── research.py      ← /research (Vane proxy)
+│   │   ├── search.py        ← /compat/perplexity, /v1/search
+│   │   ├── searxng.py       ← /compat/searxng
+│   │   ├── vane.py          ← /vane (deep research proxy)
 │   │   └── fetch.py         ← /fetch (multi-tier chain)
 │   └── services/
 │       ├── __init__.py

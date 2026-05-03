@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.main import app as fastapi_app
-from app.routers.searxng import _get_searxng_service
+from app.dependencies import get_searxng_service
 from app.services.searxng_compat import SearxngResponse, SearxngResult
 
 
@@ -48,7 +48,7 @@ async def test_general_search_returns_results(client):
         SearxngResult(title="Python Tutorial", url="https://example.com/python"),
     ]
     mock_svc = _mock_svc(mock_results, query="python")
-    fastapi_app.dependency_overrides[_get_searxng_service] = lambda: mock_svc
+    fastapi_app.dependency_overrides[get_searxng_service] = lambda: mock_svc
 
     response = await client.get("/compat/searxng", params={"q": "python"})
 
@@ -70,7 +70,7 @@ async def test_images_passthrough_returns_results(client):
         ),
     ]
     mock_svc = _mock_svc(mock_results, query="logo")
-    fastapi_app.dependency_overrides[_get_searxng_service] = lambda: mock_svc
+    fastapi_app.dependency_overrides[get_searxng_service] = lambda: mock_svc
 
     response = await client.get(
         "/compat/searxng",
@@ -88,7 +88,7 @@ async def test_images_passthrough_returns_results(client):
 async def test_empty_results(client):
     """When the service returns an empty list, the response has results=[]."""
     mock_svc = _mock_svc([], query="nonexistentquery123")
-    fastapi_app.dependency_overrides[_get_searxng_service] = lambda: mock_svc
+    fastapi_app.dependency_overrides[get_searxng_service] = lambda: mock_svc
 
     response = await client.get("/compat/searxng", params={"q": "nonexistentquery123"})
 
@@ -117,7 +117,7 @@ async def test_videos_passthrough(client):
         ),
     ]
     mock_svc = _mock_svc(mock_results, query="cat")
-    fastapi_app.dependency_overrides[_get_searxng_service] = lambda: mock_svc
+    fastapi_app.dependency_overrides[get_searxng_service] = lambda: mock_svc
 
     response = await client.get(
         "/compat/searxng",
@@ -133,7 +133,7 @@ async def test_videos_passthrough(client):
 async def test_optional_params_accepted(client):
     """Extra query parameters are forwarded to the service."""
     mock_svc = _mock_svc([], query="python")
-    fastapi_app.dependency_overrides[_get_searxng_service] = lambda: mock_svc
+    fastapi_app.dependency_overrides[get_searxng_service] = lambda: mock_svc
 
     response = await client.get(
         "/compat/searxng",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.crawl4ai import FetchResult
+from app.services.models import FetchResult
 
 
 def build_firecrawl_response(result: FetchResult) -> dict[str, Any]:

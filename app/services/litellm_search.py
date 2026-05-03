@@ -22,7 +22,7 @@ class SearchResult(BaseModel):
 
 
 class SearchResponse(BaseModel):
-    """Search results wrapper matching Perplexity/OpenAI /v1/search shape."""
+    """Search results wrapper matching Perplexity search shape."""
 
     results: list[SearchResult] = Field(default_factory=list)
 

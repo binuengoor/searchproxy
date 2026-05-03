@@ -5,10 +5,9 @@ from __future__ import annotations
 import logging
 
 import httpx
-from pydantic import BaseModel, Field
 
 from app.config import Settings
-from app.services.crawl4ai import FetchResult
+from app.services.models import FetchResult
 
 log = logging.getLogger(__name__)
 

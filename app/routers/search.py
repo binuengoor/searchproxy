@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 
-from app.main import get_client
+from app.dependencies import get_litellm_client
 from app.services.litellm_search import LiteLLMSearchClient, SearchResponse
 
 log = logging.getLogger(__name__)
@@ -14,17 +14,10 @@ router = APIRouter(prefix="", tags=["search"])
 
 
 class PerplexityQuery(BaseModel):
-    """Request body for /compat/perplexity and /v1/search."""
+    """Request body for /compat/perplexity."""
 
     query: str = Field(..., description="Search query string")
     max_results: int = Field(default=10, ge=1, le=100, description="Maximum results to return")
-
-
-def _get_litellm_client() -> LiteLLMSearchClient:
-    """DI helper: build a LiteLLMSearchClient from shared infrastructure."""
-    from app.config import settings
-
-    return LiteLLMSearchClient(client=get_client(), settings=settings)
 
 
 @router.post(
@@ -35,7 +28,7 @@ def _get_litellm_client() -> LiteLLMSearchClient:
 )
 async def compat_perplexity(
     body: PerplexityQuery,
-    client: Annotated[LiteLLMSearchClient, Depends(_get_litellm_client)],
+    client: Annotated[LiteLLMSearchClient, Depends(get_litellm_client)],
 ) -> SearchResponse:
     """Thin relay to LiteLLM search router.
 

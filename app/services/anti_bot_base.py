@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 import httpx
 
 from app.config import Settings
-from app.services.crawl4ai import FetchResult
+from app.services.models import FetchResult
 
 log = logging.getLogger(__name__)
 
@@ -19,13 +19,13 @@ def _current_month_key() -> int:
 
     ``year * 12 + (month - 1)`` preserves ordering across year boundaries.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     return now.year * 12 + (now.month - 1)
 
 
-def _check_credits(used: int, limit: int, month: int) -> bool:
-    """Return True if credits are available (not exhausted and within same month)."""
-    return used < limit and month == _current_month_key()
+def _check_credits(used: int, limit: int) -> bool:
+    """Return True if credits are still available."""
+    return used < limit
 
 
 class AntiBotClient:
@@ -94,7 +94,7 @@ class AntiBotClient:
         used: int = self._tracker["used"]
         limit: int = self._tracker["limit"]
 
-        if not _check_credits(used, limit, current_month):
+        if not _check_credits(used, limit):
             log.warning(
                 "%s credit limit reached (%d/%d) — refusing request",
                 self._SERVICE_NAME,

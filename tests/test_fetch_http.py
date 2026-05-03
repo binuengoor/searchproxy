@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.main import app as fastapi_app
-from app.routers.fetch import _get_fetch_chain
+from app.dependencies import get_fetch_chain
 
 
 @pytest.fixture
 def mock_fetch_chain():
-    """Override the _get_fetch_chain dependency with a mock FetchChain."""
+    """Override the get_fetch_chain dependency with a mock FetchChain."""
     chain = AsyncMock()
-    fastapi_app.dependency_overrides[_get_fetch_chain] = lambda: chain
+    fastapi_app.dependency_overrides[get_fetch_chain] = lambda: chain
     yield chain
     fastapi_app.dependency_overrides.clear()
 

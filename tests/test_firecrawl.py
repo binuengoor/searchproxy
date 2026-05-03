@@ -9,15 +9,15 @@ import pytest
 import app.main
 import app.config
 from app.main import app as fastapi_app
-from app.routers.firecrawl import _get_fetch_chain
-from app.services.crawl4ai import FetchResult
+from app.dependencies import get_fetch_chain
+from app.services.models import FetchResult
 
 
 @pytest.fixture
 def mock_fetch_chain():
-    """Override the _get_fetch_chain dependency with a mock FetchChain."""
+    """Override the get_fetch_chain dependency with a mock FetchChain."""
     chain = AsyncMock()
-    fastapi_app.dependency_overrides[_get_fetch_chain] = lambda: chain
+    fastapi_app.dependency_overrides[get_fetch_chain] = lambda: chain
     yield chain
     fastapi_app.dependency_overrides.clear()
 

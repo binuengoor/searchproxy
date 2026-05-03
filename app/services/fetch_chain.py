@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 
 from app.config import Settings
 from app.services.content_cleaner import clean_content
-from app.services.crawl4ai import Crawl4AIClient, FetchResult
+from app.services.models import FetchResult
+from app.services.crawl4ai import Crawl4AIClient
 from app.services.jina_reader import JinaReaderClient
 from app.services.scraperapi import ScraperAPIClient
 from app.services.scrape_do import ScrapeDoClient

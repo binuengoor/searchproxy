@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient
 
 from app.services.litellm_search import LiteLLMSearchClient, SearchResponse, SearchResult
-from app.services.crawl4ai import FetchResult
+from app.services.models import FetchResult
 
 
 # ---------------------------------------------------------------------------

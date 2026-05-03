@@ -28,12 +28,11 @@ Pydantic (validation)
 
 ## Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/compat/perplexity` | POST | Thin relay to LiteLLM search router. Perplexity-compatible responses. |
-| `/v1/search` | POST | Alias for `/compat/perplexity` (OpenAI-compatible naming). |
-| `/compat/searxng` | GET | SearXNG JSON compatibility. Image/video passthrough to upstream SearXNG when configured. |
-| `/vane` | POST | Deep research proxy to Vane. Input: query + optional depth/breadth. Output: synthesized report with inline citations. Supports streaming (`?stream=true`). |
+|| Endpoint | Method | Description |
+||----------|--------|-------------|
+|| `/compat/perplexity` | POST | Thin relay to LiteLLM search router. Perplexity-compatible responses. |
+|| `/compat/searxng` | GET | SearXNG JSON compatibility. Image/video passthrough to upstream SearXNG when configured. |
+| `/vane` | POST | Deep research proxy to Vane. Input: query + optional `optimization_mode` (`speed`/`balanced`/`quality`). Output: synthesized report with inline citations. Supports streaming (`?stream=true`). |
 | `/fetch` | POST | Fetch a single URL. Runs Crawl4AI → Jina Reader → anti-bot firebreak. |
 | `/compat/firecrawl/v2/scrape` | POST | Firecrawl v2-compatible scrape. Wraps the same fetch chain; accepts full Firecrawl request schema. Unsupported params accepted and ignored. |
 
@@ -85,11 +84,11 @@ All keys are optional. If missing, the associated fetch tier is simply skipped.
 
 ### API Standards
 
-| Endpoint | Standard Comparable To | Input | Output |
-|----------|------------------------|-------|--------|
-| `/compat/perplexity` | Perplexity API, OpenAI `/v1/search` | `{"query": "...", "max_results": 10}` | `{"results": [...]}` with title, url, snippet |
-| `/compat/searxng` | SearXNG JSON API (`?format=json`) | Query params: `q`, `categories`, `engines`, etc. | Standard SearXNG JSON with `results`, `answers`, `suggestions`, `infoboxes` |
-| `/vane` | Vane, Perplexity, Jina DeepSearch | `{"query": "...", "depth": "balanced"}` | Synthesized report with inline citations. Streams when `?stream=true` |
+|| Endpoint | Standard Comparable To | Input | Output |
+||----------|------------------------|-------|--------|
+|| `/compat/perplexity` | Perplexity API | `{"query": "...", "max_results": 10}` | `{"results": [...]}` with title, url, snippet |
+|| `/compat/searxng` | SearXNG JSON API (`?format=json`) | Query params: `q`, `categories`, `engines`, etc. | Standard SearXNG JSON with `results`, `answers`, `suggestions`, `infoboxes` |
+| `/vane` | Vane, Perplexity, Jina DeepSearch | `{"query": "...", "optimization_mode": "balanced"}` | Synthesized report with inline citations. Streams when `?stream=true` |
 | `/fetch` | `r.jina.ai`, Firecrawl | `{"url": "https://..."}` or `?url=...` | Markdown/text + metadata |
 
 ### Image/Video Passthrough for `/compat/searxng`
@@ -156,6 +155,20 @@ A response is treated as an anti-bot block if any of these are true:
 
 Monthly counters for paid tiers reset on calendar-month boundaries.
 
+### Vane Error Handling
+
+Vane failures are **never silent**. The service raises typed exceptions (`VaneTimeoutError`, `VaneUpstreamError`, `VaneError`) that the router translates into explicit error messages in the response. This prevents the model from receiving an empty report after a minute-long wait and having no idea what went wrong.
+
+|| Exception | Trigger | Router response |
+|---|---|---|
+| `VaneTimeoutError` | Vane didn't respond within `VANE_TIMEOUT` | `200` with report: `"[Deep research unavailable: ...timed out...]"` |
+| `VaneUpstreamError` | Vane returned non-2xx (e.g. 500) | `200` with report: `"[Deep research unavailable: ...HTTP 500...]"` |
+| `VaneError` | Connection refused, DNS, other transport errors | `200` with report: `"[Deep research unavailable: ...]"` |
+
+The endpoint returns HTTP 200 with an error message in the report field rather than a 5xx status, because LLM tool-calling clients handle structured errors poorly. The model sees the failure reason and can inform the user or fall back to search.
+
+For **streaming** responses, errors are embedded as `"[Vane stream error: timeout]"` or `"[Vane stream error: HTTP 500]"` chunks in the text stream.
+
 ## Project Layout
 
 ```
@@ -171,7 +184,7 @@ searchproxy/
 │   ├── config.py            ← Pydantic Settings from env
 │   ├── routers/
 │   │   ├── __init__.py
-│   │   ├── search.py        ← /compat/perplexity, /v1/search
+│   │   ├── search.py        ← /compat/perplexity
 │   │   ├── searxng.py       ← /compat/searxng
 │   │   ├── vane.py          ← /vane (deep research proxy)
 │   │   └── fetch.py         ← /fetch (multi-tier chain)
@@ -213,88 +226,6 @@ SearchProxy does not expose a native MCP server. Instead, it serves a fully dere
 ```
 
 This approach replaces the need for a dedicated `mcp_server.py` module.
-
-## Best Practices
-
-These rules shape how the code is written. They exist to keep the codebase readable, safe to refactor, and easy to change after six months of not looking at it.
-
-### 1. Flat Is Better Than Nested
-- No deeply nested packages. `app/services/*` is one level deep. That's it.
-- No `app/core/utils/helpers/` indirection. If it's a helper, it lives next to the only thing that uses it or in `app/utils.py` if shared.
-- No premature abstraction: if there's only one implementation, there is no interface or abstract base class. Add one only when a second real variant exists.
-
-### 2. One Level of Abstraction Per Function
-- A function either **orchestrates** (calls other functions, handles flow) OR **does work** (makes an HTTP call, parses text, formats output). Never both.
-- Example: `fetch_chain.execute()` orchestrates. `crawl4ai.fetch()` does work. `crawl4ai.fetch()` must not call `jina_reader.fetch()`.
-
-### 3. Configuration at the Boundary
-- **Only `app/config.py` reads environment variables.** No `os.environ.get()` anywhere else.
-- Settings are injected: routers and services receive a `settings` argument, never import a global.
-- Secret values (API keys) live in `.env` only. They never appear in `ARCHITECTURE.md`, tests, or logs.
-
-### 4. Routers Are Thin
-- A router handles input validation, calls a service, and returns the response. That's it.
-- Target: every router endpoint under 20 lines.
-- No business logic in routers. No retries in routers. No logging decisions in routers.
-
-### 5. Services Are Independent HTTP Clients
-- Each service (`crawl4ai.py`, `jina_reader.py`, etc.) is a standalone module that knows:
-  - How to build a request for its target
-  - How to validate/transform the response
-  - The failure modes it produces
-- Each service owns its own `httpx.AsyncClient` or accepts a shared session. It does not reach into another service.
-
-### 6. Explicit Error Handling
-- Never swallow exceptions silently. If a fetch tier fails, return a result object with an error field — not `None`.
-- Use typed result objects: `FetchResult(success=False, error="Cloudflare block detected", status=403, content="")`
-- Log once at the decision point, not in every inner function.
-- HTTP status codes are the contract:
-  - `502` = downstream service (LiteLLM, Vane, Crawl4AI) failed
-  - `429` = rate limited by our own credit tracker or Jina
-  - `503` = all fetch tiers exhausted
-  - `400` = client sent bad input
-  - `500` = unexpected crash (should be rare)
-
-### 7. Structured Logging Only
-- No `print()` anywhere. Use the standard `logging` module with a JSON formatter in production.
-- Every log line includes: `correlation_id`, `endpoint`, `method`, `latency_ms`.
-- Log decisions, not noise. "Escalating to Scrape.do due to Cloudflare block" is a decision. "Got response" is noise.
-
-### 8. Async Everything
-- Every I/O operation is `async`. No blocking `requests` calls, no `time.sleep()`, no synchronous file reads.
-- Use `asyncio.gather()` only when operations are genuinely parallel and independent.
-- Timeouts on every outbound request. Default: 15s for search, 30s for fetch.
-
-### 9. Type Hints Everywhere
-- Every function parameter and return value has a type hint.
-- Use `from __future__ import annotations` (Python 3.11) for forward references.
-- Pydantic models for request/response bodies. Don't use raw `dict` for API contracts.
-
-### 10. Testable Without Mocking Frameworks
-- Services accept `httpx.AsyncClient` as a constructor argument. Tests pass a custom client that returns recorded responses.
-- No `unittest.mock.patch`. Patching breaks refactoring. Dependency injection lets you swap the client.
-- Tests live in `tests/` and mirror the `app/` structure: `tests/services/test_crawl4ai.py` tests `app/services/crawl4ai.py`.
-
-### 11. Minimal Dependencies
-- Every package in `pyproject.toml` must justify its existence.
-- FastAPI + uvicorn + httpx + pydantic are the core. No ORM, no DB driver, no Redis client.
-- `python-dotenv` only in dev. Production loads env via Docker.
-
-### 12. Stateless
-- The service holds no in-memory state that survives a request.
-- Exception: monthly credit counters for Scrape.do / ScraperAPI are stored in a simple in-memory dict. On restart, counters reset. Over-spend risk is one extra request after restart — acceptable for free tiers, not for paid.
-- No in-memory caches. If caching is needed, use HTTP cache headers or add a caching proxy later.
-
-### 13. Consistent Response Shape
-- All successful responses are the resource the endpoint promises.
-- All error responses share this shape:
-  ```json
-  {
-    "detail": "Human-readable error message",
-    "error_code": "FETCH_ANTI_BOT_EXHAUSTED",
-    "correlation_id": "uuid"
-  }
-  ```
 
 ## Best Practices
 

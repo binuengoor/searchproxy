@@ -4,26 +4,12 @@ import logging
 from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Response, status
 
-from app.main import get_client
-from app.services.litellm_search import LiteLLMSearchClient
+from app.dependencies import get_searxng_service
 from app.services.searxng_compat import MEDIA_CATEGORIES, SearxngCompatService, SearxngParams, SearxngResponse
 from app.services.searxng_ui import render_html_results, upstream_html_forward
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/compat", tags=["search"])
-
-
-# ── DI helper ────────────────────────────────────────────────────────────────
-
-def _get_searxng_service() -> SearxngCompatService:
-    """Build a SearxngCompatService from shared infrastructure."""
-    from app.config import settings
-
-    return SearxngCompatService(
-        litellm_client=LiteLLMSearchClient(client=get_client(), settings=settings),
-        http_client=get_client(),
-        settings=settings,
-    )
 
 
 # ── Shared handler (both /compat/searxng and /compat/searxng/search) ─────────
@@ -100,7 +86,7 @@ async def compat_searxng(
     safesearch: int | None = Query(default=None, ge=0, le=2),
     autocomplete: str | None = Query(default=None),
     format: str = Query(default="json", description="Response format: json or html"),
-    service: Annotated[SearxngCompatService, Depends(_get_searxng_service)] = None,
+    service: Annotated[SearxngCompatService, Depends(get_searxng_service)] = None,
 ) -> SearxngResponse | Response:
     """SearXNG JSON API compatibility endpoint.
 

@@ -26,7 +26,7 @@
 - [x] Create `pyproject.toml` with FastAPI, uvicorn, httpx, pydantic, python-dotenv
 - [x] Create `app/config.py` — Pydantic Settings loading all env vars
 - [x] Create `app/main.py` — FastAPI app with lifespan, API key middleware, `/health`
-- [x] Implement `app/routers/search.py` — POST `/compat/perplexity` + alias `/v1/search`
+- [x] Implement `app/routers/search.py` — POST `/compat/perplexity`
 - [x] Implement `app/services/litellm_search.py` — thin relay to LiteLLM
 - [x] Implement `app/routers/searxng.py` — GET `/compat/searxng`
 - [x] Implement `app/services/searxng_compat.py` — param mapping + image/video passthrough
@@ -67,23 +67,22 @@
   - Auth middleware ✅ (`require_auth=true` blocks missing/wrong tokens on all routes; `/health`, `/docs`, `/openapi.json`, `/redoc` remain open)
 - [x] **Git history scrubbed** with `git filter-repo` to remove `10.1.1.150` internal IP from all commits
 - [x] `docker-compose.yml` comment fixed after filter-repo collateral
-- [x] **End-to-end live test — ALL 22 checks pass:**
+- [x] **End-to-end live test — ALL 20 checks pass:**
   - 1. `/health` = `{"status":"ok"}` ✅
-  - 2. OpenAPI has all 5 endpoints ✅
+  - 2. OpenAPI has all 6 endpoints ✅
   - 3. `/docs` = 200 ✅
   - 4. `/redoc` = 200 ✅
   - 5. `/compat/perplexity` returns 5 results ✅
-  - 6. `/v1/search` (alias) returns 3 results ✅
-  - 7. `/compat/searxng?q=python` returns 10 results ✅
-  - 8. `/compat/searxng?categories=images` returns **370 results** ✅ (SearXNG passthrough working)
-  - 9. `/compat/searxng?categories=videos` returns **92 results** ✅ (SearXNG passthrough working)
-  - 10. `/vane` sync returns 3205-char report ✅
-  - 11. `/vane?stream=true` returns 13496-char stream ✅
-  - 12. `/fetch` example.com via Crawl4AI ✅
-  - 13. `/fetch` nitter.net via Jina (anti-bot fallback) ✅
-  - 14-17. Auth excluded paths (`/health`, `/docs`, `/openapi.json`, `/compat/perplexity` with `require_auth=false`) all return 200 ✅
-  - 18-20. Missing params return 422 (`searxng` missing `q`, `fetch` missing `url`, `vane` missing `query`) ✅
-  - 21. `/mcp` returns 404 (not implemented, expected) ✅
+  - 6. `/compat/searxng?q=python` returns 10 results ✅
+  - 7. `/compat/searxng?categories=images` returns **370 results** ✅ (SearXNG passthrough working)
+  - 8. `/compat/searxng?categories=videos` returns **92 results** ✅ (SearXNG passthrough working)
+  - 9. `/vane` sync returns 3205-char report ✅
+  - 10. `/vane?stream=true` returns 13496-char stream ✅
+  - 11. `/fetch` example.com via Crawl4AI ✅
+  - 12. `/fetch` nitter.net via Jina (anti-bot fallback) ✅
+  - 13-16. Auth excluded paths (`/health`, `/docs`, `/openapi.json`, `/compat/perplexity` with `require_auth=false`) all return 200 ✅
+  - 17-19. Missing params return 422 (`searxng` missing `q`, `fetch` missing `url`, `vane` missing `query`) ✅
+  - 20. `/mcp` returns 404 (not implemented, expected) ✅
 - [x] **SearXNG compat fixes:**
   - `app/main.py`: `httpx.AsyncClient(follow_redirects=True)` to handle upstream HTTP 308 redirects
   - `.env.example`: `SEARXNG_URL` now includes `/search` suffix to avoid redirect
@@ -130,7 +129,7 @@
   - `tests/test_fetch_http.py` ✅ — `/fetch` HTTP endpoint (not just fetch_chain service)
 - [ ] **Remaining tests to add**:
   - [ ] `tests/test_auth.py` — auth middleware (`require_auth=true`, invalid token, missing header, excluded paths)
-  - [ ] `tests/test_openapi.py` — assert all 5 endpoints present in `/openapi.json`
+  - [ ] `tests/test_openapi.py` — assert all 6 endpoints present in `/openapi.json`
   - [ ] Rename `tests/test_search_and_fetch.py` → `tests/test_search_and_fetch_chain.py` for clarity
 - [x] ~~**MCP server layer**~~ (`mcp_server.py` via stdio + SSE) — **REVERSED**: OpenAPI spec serves as the MCP integration point. No native MCP server needed.
 - [ ] Add `/metrics` endpoint with Prometheus-style output

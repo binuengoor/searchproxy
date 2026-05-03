@@ -6,9 +6,10 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 
-from app.services.crawl4ai import FetchResult
+from app.dependencies import get_fetch_chain
+from app.services.models import FetchResult
 from app.services.fetch_chain import FetchChain
 
 log = logging.getLogger(__name__)
@@ -21,14 +22,6 @@ class FetchRequest(BaseModel):
     url: str = Field(..., description="URL to fetch")
 
 
-def _get_fetch_chain() -> FetchChain:
-    """DI helper: build a FetchChain from shared infrastructure."""
-    from app.config import settings
-    from app.main import get_client
-
-    return FetchChain(client=get_client(), settings=settings)
-
-
 @router.post(
     "/fetch",
     response_model=FetchResult,
@@ -38,7 +31,7 @@ def _get_fetch_chain() -> FetchChain:
 async def fetch_url(
     body: FetchRequest,
     format: Annotated[str, Query(description="Response format (markdown/text/html), future use")] = "markdown",
-    chain: Annotated[FetchChain, Depends(_get_fetch_chain)] = None,  # type: ignore[assignment]
+    chain: Annotated[FetchChain, Depends(get_fetch_chain)] = None,  # type: ignore[assignment]
 ) -> FetchResult:
     """Fetch a URL through the tiered chain: Crawl4AI → Jina Reader → anti-bot firebreak.
 

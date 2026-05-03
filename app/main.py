@@ -114,18 +114,12 @@ async def root() -> RedirectResponse:
 
 
 # ---------------------------------------------------------------------------
-# Routers (stubbed — implemented by subagents 2/3/4)
+# Routers
 # ---------------------------------------------------------------------------
 
-# These imports will resolve once subagents add their router modules.
-# The routers are registered here so the app object is complete.
-try:
-    from app.routers import search, searxng, vane, fetch, firecrawl
-    app.include_router(search.router)
-    app.include_router(searxng.router)
-    app.include_router(vane.router)
-    app.include_router(fetch.router)
-    app.include_router(firecrawl.router)
-except ImportError:
-    # Routers not yet implemented — app still starts for basic tests
-    pass
+from app.routers import search, searxng, vane, fetch, firecrawl
+app.include_router(search.router)
+app.include_router(searxng.router)
+app.include_router(vane.router)
+app.include_router(fetch.router)
+app.include_router(firecrawl.router)

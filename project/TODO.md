@@ -48,7 +48,11 @@
 - [x] `LOG_LEVEL` env var support in `app/main.py`
 - [x] DNS override in `docker-compose.yml` (public DNS for anti-bot API reachability)
 - [x] `SEARCHPROXY_REQUIRE_AUTH` + `LITELLM_API_KEY` added to `.env.example`
-- [x] Test suite: 11 passing tests (search router + fetch chain service) with `pytest`
+- [x] **Test suite: 27 passing tests (all endpoints):**
+  - `tests/test_search_and_fetch.py` — 11 tests: search router + fetch chain service
+  - `tests/test_searxng.py` — 6 tests: general search, images passthrough, videos passthrough, empty results, missing q (422), optional params
+  - `tests/test_vane.py` — 6 tests: sync research, empty report, depth mapping, streaming chunks, streaming empty, default depth
+  - `tests/test_fetch_http.py` — 4 tests: success, failed returns 200, format param, missing url (422)
 - [x] Docker image built: `searchproxy:latest` at ~187MB
 - [x] **Live test — all endpoints validated against real upstreams:**
   - `/health` ✅ (no auth)
@@ -81,13 +85,14 @@
 - [ ] Test end-to-end: Open WebUI → searchproxy → Crawl4AI → fetch
 
 ## Backlog (Phase 4 — Enhance)
-- [ ] **Add missing tests** (unit + integration):
-  - [ ] `tests/test_searxng.py` — `/compat/searxng` router (general + images passthrough)
-  - [ ] `tests/test_vane.py` — `/vane` sync + streaming with mocked `VaneProxyClient`
-  - [ ] `tests/test_fetch_http.py` — `/fetch` HTTP endpoint (not just fetch_chain service)
+- [x] **Router tests complete** (27 passing):
+  - `tests/test_searxng.py` ✅ — `/compat/searxng` router (general + images + videos passthrough)
+  - `tests/test_vane.py` ✅ — `/vane` sync + streaming with mocked `VaneProxyClient`
+  - `tests/test_fetch_http.py` ✅ — `/fetch` HTTP endpoint (not just fetch_chain service)
+- [ ] **Remaining tests to add**:
   - [ ] `tests/test_auth.py` — auth middleware (`require_auth=true`, invalid token, missing header, excluded paths)
   - [ ] `tests/test_openapi.py` — assert all 5 endpoints present in `/openapi.json`
-  - [ ] Update `tests/test_search_and_fetch.py` — rename to reflect it only tests search router + fetch chain service
+  - [ ] Rename `tests/test_search_and_fetch.py` → `tests/test_search_and_fetch_chain.py` for clarity
 - [ ] **MCP server layer** (`mcp_server.py` via stdio + SSE) — architecture-only, no implementation
 - [ ] Add `/metrics` endpoint with Prometheus-style output
 - [ ] Structured logging with JSON formatter + correlation_id

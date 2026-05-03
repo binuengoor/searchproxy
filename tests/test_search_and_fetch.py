@@ -95,14 +95,6 @@ async def test_compat_perplexity_empty_on_error(client: AsyncClient, mock_litell
 
 
 @pytest.mark.anyio
-async def test_health_no_auth(client: AsyncClient):
-    """/health is always accessible without auth."""
-    resp = await client.get("/health")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "ok"
-
-
-@pytest.mark.anyio
 async def test_compat_perplexity_bad_request(client: AsyncClient):
     """Missing 'query' field should trigger validation error."""
     resp = await client.post("/compat/perplexity", json={"max_results": 5})

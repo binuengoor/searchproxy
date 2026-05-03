@@ -7,6 +7,7 @@ from typing import AsyncGenerator
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.responses import RedirectResponse
 
 from app.config import settings
 
@@ -52,7 +53,7 @@ app = FastAPI(
 # API key middleware
 # ---------------------------------------------------------------------------
 
-EXCLUDED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc"}
+EXCLUDED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc", "/"}
 
 
 @app.middleware("http")
@@ -89,6 +90,12 @@ async def auth_middleware(request: Request, call_next: object) -> JSONResponse:
 async def health() -> dict[str, str]:
     """Liveness probe. No auth required."""
     return {"status": "ok"}
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    """Redirect root to Swagger UI for quick browser testing."""
+    return RedirectResponse(url="/docs", status_code=307)
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ All notable changes to SearchProxy will be documented in this file.
 - Monthly client-side credit tracking for Scrape.do and ScraperAPI to prevent overage on free tiers.
 - Pydantic Settings from environment variables with sensible defaults.
 - Docker + docker-compose setup for self-hosting.
+- `GET /` root redirect to `/docs` for zero-config browser-based API testing and phone health checks.
 - Comprehensive ARCHITECTURE.md with design constraints, endpoint matrix, fetch chain diagram, and decision rationale.
 
 ### Architecture

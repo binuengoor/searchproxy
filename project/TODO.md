@@ -108,11 +108,13 @@
 - [ ] Push to GitHub (needs user PAT/SSH key auth setup)
 
 ## Backlog (Phase 4 — Enhance)
-- [ ] Serve Swagger UI at root (`GET /` → redirect to `/docs`) — planned, see `.hermes/plans/2026-05-03_0801-root-swagger-url.md`
-  - [ ] Add `@app.get("/")` redirect in `app/main.py`
-  - [ ] Add `"/"` to `EXCLUDED_PATHS` for auth middleware
-  - [ ] Add `tests/test_main.py` with redirect + health tests
-  - [ ] Update `CHANGELOG.md`
+- [x] Serve Swagger UI at root (`GET /` → redirect to `/docs`) — **DONE** ✅
+  - [x] Add `@app.get("/")` redirect in `app/main.py`
+  - [x] Add `"/"` to `EXCLUDED_PATHS` for auth middleware
+  - [x] Add `tests/test_main.py` with redirect + health tests (3/3 passing)
+  - [x] Rebuild Docker image `searchproxy:latest` and restart container
+  - [x] Live verified: `GET /` → 307 → `/docs` with `swagger-ui` in body
+  - [x] Update `CHANGELOG.md`
 - [x] **Router tests complete** (27 passing):
   - `tests/test_searxng.py` ✅ — `/compat/searxng` router (general + images + videos passthrough)
   - `tests/test_vane.py` ✅ — `/vane` sync + streaming with mocked `VaneProxyClient`

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Any
@@ -81,6 +82,39 @@ app.openapi = _dereferenced_openapi  # type: ignore[method-assign]
 # ---------------------------------------------------------------------------
 
 EXCLUDED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc", "/"}
+
+
+@app.middleware("http")
+async def mcp_body_unwrap(request: Request, call_next: object) -> JSONResponse:
+    """Unwrap MCPHub's nested ``body`` key for POST/PUT/PATCH requests.
+
+    When MCPHub generates tools from an OpenAPI spec, it wraps the request
+    body model inside a ``body`` key: ``{"body": {"query": "..."}}``.
+    FastAPI expects the fields at the top level, so this middleware detects
+    the wrapper and rewrites the request body to flatten it.
+    """
+    if request.method in ("POST", "PUT", "PATCH") and request.headers.get(
+        "content-type", ""
+    ).startswith("application/json"):
+        try:
+            raw = await request.body()
+            if raw:
+                data = json.loads(raw)
+                # Heuristic: if the body is a dict with exactly one key "body"
+                # whose value is also a dict, flatten it.
+                if (
+                    isinstance(data, dict)
+                    and list(data.keys()) == ["body"]
+                    and isinstance(data["body"], dict)
+                ):
+                    log.debug("MCPHub body unwrap: flattening nested 'body' key")
+                    # Replace the request body with the unwrapped version
+                    new_body = json.dumps(data["body"]).encode()
+                    request._body = new_body  # type: ignore[attr-defined]
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass  # Not valid JSON — leave untouched
+
+    return await call_next(request)  # type: ignore[return-value]
 
 
 @app.middleware("http")

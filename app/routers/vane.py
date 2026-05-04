@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.dependencies import get_vane_client
+from app.schemas import MessageItem
 from app.services.vane_proxy import VaneProxyClient, VaneResearchResponse, VaneTimeoutError, VaneUpstreamError, VaneError
 
 log = logging.getLogger(__name__)
@@ -28,6 +29,20 @@ class VaneRequest(BaseModel):
     ignored.
     """
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"query": "Real Madrid's 2025-26 La Liga season", "optimization_mode": "balanced"},
+                {
+                    "messages": [
+                        {"role": "user", "content": "Explain how transformer attention works."}
+                    ],
+                    "optimization_mode": "quality",
+                },
+            ]
+        }
+    )
+
     query: str | None = Field(
         default=None,
         description="Research query or topic. Mutually exclusive with ``messages`` — provide one or the other.",
@@ -38,7 +53,7 @@ class VaneRequest(BaseModel):
         description="Research depth: 'speed' (60s timeout), 'balanced' (180s), or 'quality' (300s)",
     )
     # —— Open WebUI / Perplexity compat fields (ignored) ——
-    messages: list[dict[str, Any]] | None = Field(
+    messages: list[MessageItem] | None = Field(
         default=None,
         description="OpenAI-style messages array. If provided, query is extracted from the last user message.",
     )
@@ -55,8 +70,10 @@ class VaneRequest(BaseModel):
     def _extract_query(self) -> "VaneRequest":
         if not self.query and self.messages:
             for msg in reversed(self.messages):
-                if msg.get("role") == "user" and isinstance(msg.get("content"), str):
-                    self.query = msg["content"].strip()
+                role = getattr(msg, "role", None)
+                content = getattr(msg, "content", None)
+                if role == "user" and isinstance(content, str):
+                    self.query = content.strip()
                     break
         if not self.query:
             raise ValueError("Either 'query' or 'messages' (with a user message) is required.")

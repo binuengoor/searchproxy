@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import Settings
 
@@ -16,16 +16,46 @@ _warned_https_no_key = False
 class SearchResult(BaseModel):
     """A single search result from LiteLLM."""
 
-    title: str
-    url: str
-    snippet: str
+    title: str = Field(..., description="Page title.")
+    url: str = Field(..., description="Source URL.")
+    snippet: str = Field(..., description="Short content summary (excerpt) from the page.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "title": "Real Madrid CF - Wikipedia",
+                    "url": "https://en.wikipedia.org/wiki/Real_Madrid_CF",
+                    "snippet": "Real Madrid Club de Fútbol, commonly referred to as Real Madrid, is a Spanish professional football club based in Madrid...",
+                }
+            ]
+        }
+    )
 
 
 class SearchResponse(BaseModel):
     """Search results wrapper matching Perplexity search shape."""
 
-    results: list[SearchResult] = Field(default_factory=list)
+    results: list[SearchResult] = Field(
+        default_factory=list,
+        description="List of search results; may be empty on error or no matches.",
+    )
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "results": [
+                        {
+                            "title": "Real Madrid CF - Wikipedia",
+                            "url": "https://en.wikipedia.org/wiki/Real_Madrid_CF",
+                            "snippet": "Real Madrid Club de Fútbol, commonly referred to as Real Madrid...",
+                        }
+                    ]
+                }
+            ]
+        }
+    )
 
 class LiteLLMSearchClient:
     """Standalone async client for the LiteLLM search router.

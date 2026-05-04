@@ -6,7 +6,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_fetch_chain
 from app.services.models import FetchResult
@@ -20,6 +20,14 @@ class FetchRequest(BaseModel):
     """Request body for the /fetch endpoint."""
 
     url: str = Field(..., description="URL to fetch")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"url": "https://en.wikipedia.org/wiki/Real_Madrid_CF"}
+            ]
+        }
+    )
 
 
 @router.post(

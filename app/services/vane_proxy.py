@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import Settings
 
@@ -35,6 +35,18 @@ class VaneResearchResponse(BaseModel):
     """Response shape for the non-streaming /vane endpoint."""
 
     report: str = Field(default="", description="Synthesized research report text with inline citations.")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "report": "## Real Madrid's 2025-26 La Liga Season\n\n" \
+                               "Real Madrid started the 2025-26 La Liga campaign with a series of dominant victories...\n\n" \
+                               "*Sources: ESPN, BBC Sport*"
+                }
+            ]
+        }
+    )
 
 
 class VaneProxyClient:

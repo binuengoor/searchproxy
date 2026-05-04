@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.dependencies import get_litellm_client
+from app.schemas import MessageItem
 from app.services.litellm_search import LiteLLMSearchClient, SearchResponse
 
 log = logging.getLogger(__name__)
@@ -27,6 +28,19 @@ class PerplexityQuery(BaseModel):
     ignored.
     """
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"query": "Real Madrid 2025 season"},
+                {
+                    "messages": [
+                        {"role": "user", "content": "What is the capital of Canada?"}
+                    ]
+                },
+            ]
+        }
+    )
+
     query: str | None = Field(
         default=None,
         description="Search query string. Mutually exclusive with ``messages`` — provide one or the other.",
@@ -35,7 +49,7 @@ class PerplexityQuery(BaseModel):
         default=10, ge=1, le=100, description="Maximum results to return"
     )
     # —— Open WebUI / Perplexity compat fields (ignored) ——
-    messages: list[dict[str, Any]] | None = Field(
+    messages: list[MessageItem] | None = Field(
         default=None,
         description="OpenAI-style messages array. If provided, query is extracted from the last user message.",
     )
@@ -52,8 +66,10 @@ class PerplexityQuery(BaseModel):
     def _extract_query(self) -> "PerplexityQuery":
         if not self.query and self.messages:
             for msg in reversed(self.messages):
-                if msg.get("role") == "user" and isinstance(msg.get("content"), str):
-                    self.query = msg["content"].strip()
+                role = getattr(msg, "role", None)
+                content = getattr(msg, "content", None)
+                if role == "user" and isinstance(content, str):
+                    self.query = content.strip()
                     break
         if not self.query:
             raise ValueError("Either 'query' or 'messages' (with a user message) is required.")

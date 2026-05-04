@@ -2,6 +2,11 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.5.1] — 2026-05-04
+
+### Fixed
+- **422 from MCPHub body wrapping** — MCPHub generates tool schemas from OpenAPI specs and wraps request bodies under a `body` key (e.g., `{"body": {"query": "..."}}`). FastAPI expects top-level fields. Added `mcp_body_unwrap` middleware that detects the wrapper and flattens it before routing. Transparent to direct HTTP callers.
+
 ## [0.5.0] — 2026-05-04
 
 ### Fixed

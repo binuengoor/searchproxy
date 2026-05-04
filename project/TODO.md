@@ -105,6 +105,9 @@
 - [x] ~~`/fetch` returns raw HTML from anti-bot firebreak (no content extraction)~~ — **FIXED 0.3.0** ✅ trafilatura content cleaner strips boilerplate from all success paths.
 
 ## In Progress
+- [x] Vane retry logic — 3 retries on transient 5xx (500, 502, 503, 504) with 1s delay ✅
+  - Retry applies to sync (`/vane`) and streaming (`/vane?stream=true`) requests
+  - Timeouts and 4xx are not retried (by design)
 - [x] Validate `.env` file completeness and connectivity for all upstream services ✅
 - [x] **OpenAPI spec correctness audit** — fixed 5 issues, all response schemas now match runtime types ✅
 - [x] **LLM consumability fixes** — `messages` extraction for Perplexity/Vane, `limit` alias for searxng, explicit `operation_id` for all endpoints ✅

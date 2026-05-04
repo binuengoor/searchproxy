@@ -1,10 +1,6 @@
-"""Standalone async client for the Vane deep research service.
-
-Raises structured exceptions on failure — callers decide how to handle errors.
-"""
-
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import httpx
@@ -56,6 +52,8 @@ class VaneProxyClient:
     Raises VaneError subclasses on failure — callers decide how to handle.
     """
 
+    _RETRIABLE_STATUS_CODES = frozenset({500, 502, 503, 504})
+
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self._client = client
         self._settings = settings
@@ -100,8 +98,51 @@ class VaneProxyClient:
             "stream": stream,
         }
 
+    async def _post_with_retry(
+        self,
+        url: str,
+        *,
+        json: dict,
+        timeout: httpx.Timeout,
+        max_retries: int = 3,
+    ) -> httpx.Response:
+        """POST to *url* with automatic retry on transient 5xx errors.
+
+        Retries up to *max_retries* times with a 1-second delay between
+        attempts. 4xx errors and timeouts are not retried.
+        """
+        last_exc: httpx.HTTPStatusError | None = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = await self._client.post(url, json=json, timeout=timeout)
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                if exc.response.status_code in self._RETRIABLE_STATUS_CODES and attempt < max_retries:
+                    log.warning(
+                        "Vane returned HTTP %d (attempt %d/%d); retrying in 1s...",
+                        exc.response.status_code,
+                        attempt,
+                        max_retries,
+                    )
+                    await asyncio.sleep(1.0)
+                    continue
+                raise
+            except httpx.TimeoutException:
+                # Timeouts are not retried: another 180s attempt is wasteful.
+                raise
+
+        # Should never be reached, but satisfies the type checker.
+        assert last_exc is not None
+        raise last_exc
+
     async def research(self, query: str, optimization_mode: str = "balanced") -> str:
         """POST to Vane /api/search, return the synthesized report as raw text.
+
+        Retries up to 3 times on transient 5xx errors (500, 502, 503, 504).
+        Timeouts and 4xx errors are not retried.
 
         Args:
             query: The research question or topic.
@@ -120,15 +161,14 @@ class VaneProxyClient:
         body = self._build_body(query, optimization_mode, stream=False)
         timeout = self._timeout_for_mode(optimization_mode)
         try:
-            response = await self._client.post(
+            response = await self._post_with_retry(
                 self._build_url(),
                 json=body,
                 timeout=timeout,
             )
-            response.raise_for_status()
         except httpx.TimeoutException:
             raise VaneTimeoutError(
-                f"Vane research timed out after {timeout.timeout}s for query='{query}'"
+                f"Vane research timed out after {timeout} for query='{query}'"
             ) from None
         except httpx.HTTPStatusError as exc:
             raise VaneUpstreamError(
@@ -144,9 +184,8 @@ class VaneProxyClient:
     async def research_stream(self, query: str, optimization_mode: str = "balanced"):
         """Yield report chunks from Vane as a streaming response.
 
-        Uses ``httpx.AsyncClient.stream()`` to stream the request body.
-        Yields raw text chunks as they arrive. On failure, yields a single
-        error chunk so streaming consumers receive a clear signal.
+        Retries the connection up to 3 times on transient 5xx errors.
+        Each retry re-opens the SSE stream from the beginning.
 
         Args:
             query: The research question or topic.
@@ -159,27 +198,43 @@ class VaneProxyClient:
 
         body = self._build_body(query, optimization_mode, stream=True)
         timeout = self._timeout_for_mode(optimization_mode)
-        try:
-            async with self._client.stream(
-                "POST",
-                self._build_url(),
-                json=body,
-                timeout=timeout,
-            ) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_text():
-                    if chunk:
-                        yield chunk
-        except httpx.TimeoutException:
-            log.warning("Vane research stream timed out for query='%s'", query)
-            yield "[Vane stream error: timeout]"
-        except httpx.HTTPStatusError as exc:
-            log.warning(
-                "Vane research stream returned HTTP %d for query='%s'",
-                exc.response.status_code,
-                query,
-            )
-            yield f"[Vane stream error: HTTP {exc.response.status_code}]"
-        except Exception as exc:
-            log.warning("Vane research stream failed for query='%s': %s", query, exc)
-            yield f"[Vane stream error: {exc}]"
+        max_retries = 3
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                async with self._client.stream(
+                    "POST",
+                    self._build_url(),
+                    json=body,
+                    timeout=timeout,
+                ) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_text():
+                        if chunk:
+                            yield chunk
+                return
+            except httpx.TimeoutException:
+                log.warning("Vane research stream timed out for query='%s'", query)
+                yield "[Vane stream error: timeout]"
+                return
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in self._RETRIABLE_STATUS_CODES and attempt < max_retries:
+                    log.warning(
+                        "Vane stream returned HTTP %d (attempt %d/%d); retrying in 1s...",
+                        exc.response.status_code,
+                        attempt,
+                        max_retries,
+                    )
+                    await asyncio.sleep(1.0)
+                    continue
+                log.warning(
+                    "Vane research stream returned HTTP %d for query='%s'",
+                    exc.response.status_code,
+                    query,
+                )
+                yield f"[Vane stream error: HTTP {exc.response.status_code}]"
+                return
+            except Exception as exc:
+                log.warning("Vane research stream failed for query='%s': %s", query, exc)
+                yield f"[Vane stream error: {exc}]"
+                return

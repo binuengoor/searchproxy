@@ -2,7 +2,13 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
-## [0.4.0] — Unreleased
+## [0.4.1] — Unreleased
+
+### Added
+- **Vane retry logic** — `VaneProxyClient` automatically retries transient 5xx errors (500, 502, 503, 504) up to 3 times with a 1-second delay. Applies to both sync (`/vane`) and streaming (`/vane?stream=true`) requests. Timeouts and 4xx client errors are not retried.
+
+### Architecture
+- New private method `_post_with_retry` in `VaneProxyClient` handles backoff and status-code filtering. Retriable codes defined as a `frozenset` class constant for easy maintenance.
 
 ### Added (Tool consolidation — OpenAPI/MCP surface)
 - **Reduced visible endpoints from 7 to 3 (+ health)** — Hidden redundant aliases from OpenAPI spec so MCPHub/Open WebUI only exposes canonical tools:

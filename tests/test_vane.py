@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from app.main import app as fastapi_app
 from app.dependencies import get_vane_client
-from app.services.vane_proxy import VaneTimeoutError, VaneUpstreamError, VaneError
+from app.services.vane_proxy import (
+    VaneProxyClient,
+    VaneTimeoutError,
+    VaneUpstreamError,
+    VaneError,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -139,7 +145,7 @@ async def test_default_optimization_mode_is_balanced(client, mock_vane_client):
 
 
 # ---------------------------------------------------------------------------
-# Error handling tests
+# Error handling tests (router level)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.anyio
@@ -184,3 +190,172 @@ async def test_vane_generic_error_returns_error_report(client, mock_vane_client)
     assert response.status_code == 200
     data = response.json()
     assert "unavailable" in data["report"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Retry tests (service level)
+# ---------------------------------------------------------------------------
+
+class FakeResponse:
+    """Minimal httpx.Response stand-in for mocking status-code errors."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        raise httpx.HTTPStatusError(
+            message=f"Server error {self.status_code}",
+            request=MagicMock(),
+            response=self,
+        )
+
+
+@pytest.fixture
+def dummy_settings():
+    """Return a Settings-like object with minimal VANE_* attributes."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        VANE_URL="http://vane-test:3001",
+        VANE_CHAT_PROVIDER_ID="p1",
+        VANE_CHAT_MODEL_KEY="m1",
+        VANE_EMBED_PROVIDER_ID="p2",
+        VANE_EMBED_MODEL_KEY="m2",
+        VANE_TIMEOUT=120,
+    )
+
+
+@pytest.mark.anyio
+async def test_research_retries_on_500_then_succeeds(dummy_settings, monkeypatch):
+    """VaneProxyClient retries on HTTP 500 and succeeds on the second attempt."""
+    mock_post = AsyncMock(side_effect=[
+        FakeResponse(500),
+        MagicMock(raise_for_status=lambda: None, json=lambda: {"message": "retried report"}),
+    ])
+    mock_sleep = AsyncMock()
+
+    monkeypatch.setattr("app.services.vane_proxy.asyncio.sleep", mock_sleep)
+
+    proxy = VaneProxyClient(client=MagicMock(post=mock_post), settings=dummy_settings)
+    result = await proxy.research("retry test")
+
+    assert result == "retried report"
+    assert mock_post.await_count == 2
+    mock_sleep.assert_awaited_once_with(1.0)
+
+
+@pytest.mark.anyio
+async def test_research_fails_after_3_retries_on_500(dummy_settings, monkeypatch):
+    """VaneProxyClient gives up after 3 consecutive HTTP 500s."""
+    mock_post = AsyncMock(side_effect=[
+        FakeResponse(500),
+        FakeResponse(500),
+        FakeResponse(500),
+    ])
+    mock_sleep = AsyncMock()
+    monkeypatch.setattr("app.services.vane_proxy.asyncio.sleep", mock_sleep)
+
+    proxy = VaneProxyClient(client=MagicMock(post=mock_post), settings=dummy_settings)
+
+    with pytest.raises(VaneUpstreamError) as exc_info:
+        await proxy.research("always 500")
+
+    assert exc_info.value.status_code == 500
+    assert mock_post.await_count == 3
+    assert mock_sleep.await_count == 2  # sleeps after attempts 1 and 2
+
+
+@pytest.mark.anyio
+async def test_research_no_retry_on_4xx(dummy_settings, monkeypatch):
+    """VaneProxyClient does NOT retry on HTTP 400 (client error)."""
+    mock_post = AsyncMock(side_effect=[FakeResponse(400)])
+    mock_sleep = AsyncMock()
+    monkeypatch.setattr("app.services.vane_proxy.asyncio.sleep", mock_sleep)
+
+    proxy = VaneProxyClient(client=MagicMock(post=mock_post), settings=dummy_settings)
+
+    with pytest.raises(VaneUpstreamError) as exc_info:
+        await proxy.research("bad request")
+
+    assert exc_info.value.status_code == 400
+    assert mock_post.await_count == 1
+    mock_sleep.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_research_no_retry_on_timeout(dummy_settings, monkeypatch):
+    """VaneProxyClient does NOT retry on httpx.TimeoutException."""
+    mock_post = AsyncMock(side_effect=httpx.TimeoutException("Connection timed out"))
+    mock_sleep = AsyncMock()
+    monkeypatch.setattr("app.services.vane_proxy.asyncio.sleep", mock_sleep)
+
+    proxy = VaneProxyClient(client=MagicMock(post=mock_post), settings=dummy_settings)
+
+    with pytest.raises(VaneTimeoutError):
+        await proxy.research("slow query")
+
+    assert mock_post.await_count == 1
+    mock_sleep.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_stream_retries_on_502_then_succeeds(dummy_settings, monkeypatch):
+    """VaneProxyClient research_stream retries on HTTP 502 and succeeds."""
+
+    async def _ok_aiter():
+        for chunk in ("chunk1", "chunk2"):
+            yield chunk
+
+    ok_response = MagicMock()
+    ok_response.raise_for_status = MagicMock()
+    ok_response.aiter_text = _ok_aiter
+
+    mock_stream = MagicMock()
+    mock_stream.__aenter__ = AsyncMock(side_effect=[
+        FakeResponse(502),
+        ok_response,
+    ])
+    mock_stream.__aexit__ = AsyncMock(return_value=False)
+
+    mock_client = MagicMock()
+    mock_client.stream = MagicMock(return_value=mock_stream)
+
+    mock_sleep = AsyncMock()
+    monkeypatch.setattr("app.services.vane_proxy.asyncio.sleep", mock_sleep)
+
+    proxy = VaneProxyClient(client=mock_client, settings=dummy_settings)
+    chunks = [c async for c in proxy.research_stream("stream retry")]
+
+    assert chunks == ["chunk1", "chunk2"]
+    assert mock_client.stream.call_count == 2
+    mock_sleep.assert_awaited_once_with(1.0)
+
+
+@pytest.mark.anyio
+async def test_stream_gives_up_after_3_retries(dummy_settings, monkeypatch):
+    """VaneProxyClient research_stream yields error after 3 consecutive 503s."""
+    mock_stream = MagicMock()
+    mock_stream.__aenter__ = AsyncMock(side_effect=[
+        FakeResponse(503),
+        FakeResponse(503),
+        FakeResponse(503),
+    ])
+    mock_stream.__aexit__ = AsyncMock(return_value=False)
+
+    mock_client = MagicMock()
+    mock_client.stream = MagicMock(return_value=mock_stream)
+
+    mock_sleep = AsyncMock()
+    monkeypatch.setattr("app.services.vane_proxy.asyncio.sleep", mock_sleep)
+
+    proxy = VaneProxyClient(client=mock_client, settings=dummy_settings)
+    chunks = [c async for c in proxy.research_stream("stream fail")]
+
+    assert chunks == ["[Vane stream error: HTTP 503]"]
+    assert mock_client.stream.call_count == 3
+    assert mock_sleep.await_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------

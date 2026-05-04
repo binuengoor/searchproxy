@@ -173,10 +173,12 @@ Monthly counters for paid tiers reset on calendar-month boundaries.
 
 Vane failures are **never silent**. The service raises typed exceptions (`VaneTimeoutError`, `VaneUpstreamError`, `VaneError`) that the router translates into explicit error messages in the response. This prevents the model from receiving an empty report after a minute-long wait and having no idea what went wrong.
 
-|| Exception | Trigger | Router response |
-|---|---|---|
+Transient 5xx errors (500, 502, 503, 504) are automatically retried up to **3 times** with a 1-second delay between attempts. Timeouts and 4xx errors are not retried.
+
+||| Exception | Trigger | Router response |
+|---|---|---|---|
 | `VaneTimeoutError` | Vane didn't respond within mode-scaled timeout | `200` with report: `"[Deep research unavailable: ...timed out...]"` |
-| `VaneUpstreamError` | Vane returned non-2xx (e.g. 500) | `200` with report: `"[Deep research unavailable: ...HTTP 500...]"` |
+| `VaneUpstreamError` | Vane returned non-2xx (e.g. 500) after retries exhausted | `200` with report: `"[Deep research unavailable: ...HTTP 500...]"` |
 | `VaneError` | Connection refused, DNS, other transport errors | `200` with report: `"[Deep research unavailable: ...]"` |
 
 The endpoint returns HTTP 200 with an error message in the report field rather than a 5xx status, because LLM tool-calling clients handle structured errors poorly. The model sees the failure reason and can inform the user or fall back to search.

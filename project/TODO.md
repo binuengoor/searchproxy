@@ -96,6 +96,7 @@
   - Returns Firecrawl-shaped JSON: `{"success": true, "data": {"markdown": "...", "metadata": {...}}}`
   - Auth via existing Bearer token middleware
   - `tests/test_firecrawl.py` — 6 tests, all passing
+- [x] **422 fix: OpenAPI 3.0.3 + schema simplification** — Forced `app.openapi_version = "3.0.3"` in main.py, replaced all `str | None` / `bool | None` with concrete defaults in `PerplexityQuery`, `VaneRequest`, `MessageItem`. Eliminated all `anyOf` nullable patterns from the spec that MCPHub/Open WebUI cannot parse. Rebuilt Docker image, verified zero `anyOf` patterns and all endpoints work.
 
 ## Known Issues / Limitations (from live test)
 - [ ] `/vane` with long research queries can take 2+ minutes — Vane backend timeout, not searchproxy. Consider increasing `VANE_TIMEOUT` beyond 120s for `comprehensive` depth.

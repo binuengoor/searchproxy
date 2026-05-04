@@ -21,4 +21,4 @@ class MessageItem(BaseModel):
     """
 
     role: str = Field(..., description="Message role: ``user``, ``assistant``, or ``system``.")
-    content: str = Field(..., description="Message text content.")
+    content: str = Field(default="", description="Message text content.")

@@ -59,6 +59,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+# Force OpenAPI 3.0.3 for max client compatibility (MCPHub, Open WebUI).
+# OpenAPI 3.1 emits `anyOf: [{type: string}, {type: null}]` for Optional
+# fields, which many tool clients cannot parse, causing 422 errors.
+app.openapi_version = "3.0.3"
 
 # Overwrite /openapi.json handler so MCPHub receives a $ref-free spec.
 _original_openapi = app.openapi

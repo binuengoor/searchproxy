@@ -79,9 +79,24 @@ async def test_compat_perplexity_empty_on_error(client: AsyncClient, mock_litell
 
 @pytest.mark.anyio
 async def test_compat_perplexity_bad_request(client: AsyncClient):
-    """Missing 'query' field should trigger validation error."""
+    """Missing 'query' or 'messages' should trigger validation error."""
     resp = await client.post("/compat/perplexity", json={"max_results": 5})
     assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_compat_perplexity_null_content_messages(client: AsyncClient, mock_litellm_search: AsyncMock):
+    """Messages with null content (e.g. assistant tool-call messages) are accepted."""
+    mock_litellm_search.return_value = SearchResponse(results=[])
+
+    resp = await client.post("/compat/perplexity", json={
+        "messages": [
+            {"role": "user", "content": "test query"},
+            {"role": "assistant", "content": None, "tool_calls": []},
+        ]
+    })
+    assert resp.status_code == 200
+    mock_litellm_search.assert_awaited_once_with(query="test query", max_results=10)
 
 
 # ---------------------------------------------------------------------------

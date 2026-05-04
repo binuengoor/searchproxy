@@ -43,8 +43,8 @@ class VaneRequest(BaseModel):
         }
     )
 
-    query: str | None = Field(
-        default=None,
+    query: str = Field(
+        default="",
         description="Research query or topic. Mutually exclusive with ``messages`` — provide one or the other.",
     )
     optimization_mode: str = Field(
@@ -52,18 +52,17 @@ class VaneRequest(BaseModel):
         json_schema_extra={"enum": ["speed", "balanced", "quality"]},
         description="Research depth: 'speed' (60s timeout), 'balanced' (180s), or 'quality' (300s)",
     )
-    # —— Open WebUI / Perplexity compat fields (ignored) ——
-    messages: list[MessageItem] | None = Field(
-        default=None,
+    # —— Open WebUI / Perplexity compat fields (ignored on Vane) ——
+    messages: list[MessageItem] = Field(
+        default=[],
         description="OpenAI-style messages array. If provided, query is extracted from the last user message.",
     )
-    model: str | None = Field(default=None, description="Ignored — forwarded for Open WebUI compat.")
-    stream: bool | None = Field(default=None, description="Ignored — forwarded for Open WebUI compat.")
-    return_related_questions: bool | None = Field(
-        default=None, description="Ignored — forwarded for Open WebUI compat."
+    stream: bool = Field(default=False, description="Ignored — forwarded for Open WebUI compat.")
+    return_related_questions: bool = Field(
+        default=False, description="Ignored — forwarded for Open WebUI compat."
     )
-    search_recency_filter: str | None = Field(
-        default=None, description="Ignored — forwarded for Open WebUI compat."
+    search_recency_filter: str = Field(
+        default="", description="Ignored — forwarded for Open WebUI compat."
     )
 
     @model_validator(mode="after")

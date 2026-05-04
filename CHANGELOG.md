@@ -2,6 +2,15 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.5.0] — 2026-05-04
+
+### Fixed
+- **422 Unprocessable Entity from MCPHub/Open WebUI tool calls** — Root cause was OpenAPI 3.1.0 spec generating `anyOf: [{type: string}, {type: null}]` for `Optional` fields, which many MCP/tool clients cannot parse. When clients auto-generated request bodies from the spec, they produced invalid payloads that FastAPI rejected with 422.
+  - Forced OpenAPI 3.0.3 for maximum client compatibility — eliminates all `anyOf` nullable patterns
+  - Replaced `str | None` / `bool | None` with concrete defaults (`query: str = ""`, `stream: bool = False`, etc.) in `PerplexityQuery`, `VaneRequest`, and `MessageItem` schemas
+  - All MCP-visible endpoints now emit clean, client-friendly schemas with zero `anyOf` patterns
+- **`MessageItem.content` simplified** — Was `str | None` (emitting `anyOf`), now `str = ""` — tool clients send string content, not null
+
 ## [0.4.1] — Unreleased
 
 ### Added

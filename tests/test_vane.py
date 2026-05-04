@@ -144,6 +144,26 @@ async def test_default_optimization_mode_is_balanced(client, mock_vane_client):
     )
 
 
+@pytest.mark.anyio
+async def test_vane_accepts_messages_with_null_content(client, mock_vane_client):
+    """Messages arrays with null content (assistant tool-call messages) are accepted."""
+    mock_vane_client.research = AsyncMock(return_value="null content report")
+
+    response = await client.post("/vane", json={
+        "messages": [
+            {"role": "user", "content": "research topic"},
+            {"role": "assistant", "content": None, "tool_calls": []},
+        ]
+    })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["report"] == "null content report"
+    mock_vane_client.research.assert_awaited_once_with(
+        query="research topic", optimization_mode="balanced"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Error handling tests (router level)
 # ---------------------------------------------------------------------------

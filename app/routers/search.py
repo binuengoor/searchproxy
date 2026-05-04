@@ -41,25 +41,25 @@ class PerplexityQuery(BaseModel):
         }
     )
 
-    query: str | None = Field(
-        default=None,
+    query: str = Field(
+        default="",
         description="Search query string. Mutually exclusive with ``messages`` — provide one or the other.",
     )
     max_results: int = Field(
         default=10, ge=1, le=100, description="Maximum results to return"
     )
     # —— Open WebUI / Perplexity compat fields (ignored) ——
-    messages: list[MessageItem] | None = Field(
-        default=None,
+    messages: list[MessageItem] = Field(
+        default=[],
         description="OpenAI-style messages array. If provided, query is extracted from the last user message.",
     )
-    model: str | None = Field(default=None, description="Ignored — forwarded for Open WebUI compat.")
-    stream: bool | None = Field(default=None, description="Ignored — forwarded for Open WebUI compat.")
-    return_related_questions: bool | None = Field(
-        default=None, description="Ignored — forwarded for Open WebUI compat."
+    model: str = Field(default="", description="Ignored — forwarded for Open WebUI compat.")
+    stream: bool = Field(default=False, description="Ignored — forwarded for Open WebUI compat.")
+    return_related_questions: bool = Field(
+        default=False, description="Ignored — forwarded for Open WebUI compat."
     )
-    search_recency_filter: str | None = Field(
-        default=None, description="Ignored — forwarded for Open WebUI compat."
+    search_recency_filter: str = Field(
+        default="", description="Ignored — forwarded for Open WebUI compat."
     )
 
     @model_validator(mode="after")

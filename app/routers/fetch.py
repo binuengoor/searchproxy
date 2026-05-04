@@ -26,16 +26,19 @@ class FetchRequest(BaseModel):
     "/fetch",
     response_model=FetchResult,
     status_code=status.HTTP_200_OK,
-    summary="Fetch a URL via multi-tier chain",
+    summary="Fetch content from a specific URL",
+    operation_id="fetch_url",
 )
 async def fetch_url(
     body: FetchRequest,
-    format: Annotated[str, Query(description="Response format (markdown/text/html), future use")] = "markdown",
+    format: Annotated[str, Query(description="Response format: markdown (default; currently the only supported format). Future: text, html.")] = "markdown",
     chain: Annotated[FetchChain, Depends(get_fetch_chain)] = None,  # type: ignore[assignment]
 ) -> FetchResult:
-    """Fetch a URL through the tiered chain: Crawl4AI → Jina Reader → anti-bot firebreak.
+    """Use this tool when the user provides a specific URL and asks you to read,
+    summarize, quote, or analyze that page. Fetches through a tiered chain
+    (Crawl4AI → Jina Reader → anti-bot fallback) and returns markdown content
+    with metadata.
 
-    Returns markdown (or raw HTML for anti-bot bypass results) with metadata.
     Set ``format=html`` for future raw HTML support.
     """
     log.info("/fetch url='%s' format=%s", body.url, format)

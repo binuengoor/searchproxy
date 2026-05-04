@@ -106,6 +106,9 @@
 
 ## In Progress
 - [x] Validate `.env` file completeness and connectivity for all upstream services ✅
+- [x] **OpenAPI spec correctness audit** — fixed 5 issues, all response schemas now match runtime types ✅
+- [x] **LLM consumability fixes** — `messages` extraction for Perplexity/Vane, `limit` alias for searxng, explicit `operation_id` for all endpoints ✅
+- [x] **Tool consolidation** — Reduced OpenAPI visible surface from 7 to 3 tools (+ health) with capability-focused descriptions. Hidden redundant aliases (`/v1/search`, `/compat/searxng`, `/compat/searxng/search`, `/compat/firecrawl/v2/scrape`) from MCP discovery while keeping them callable at runtime ✅
 
 ## Backlog (Phase 3 — Deploy)
 - [ ] Deploy to ai-agents host (Docker) — blocked on GitHub auth

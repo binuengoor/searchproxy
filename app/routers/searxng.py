@@ -25,18 +25,19 @@ async def _handle_searxng(
     safesearch: int | None,
     autocomplete: str | None,
     format: str,
+    limit: int | None,
     service: SearxngCompatService,
 ) -> SearxngResponse | Response:
     """Handle a SearXNG-compat request in either JSON or HTML format."""
     log.info(
-        "/compat/searxng q='%s' format=%s categories=%s engines=%s",
-        q, format, categories, engines,
+        "/compat/searxng q='%s' format=%s categories=%s engines=%s limit=%s",
+        q, format, categories, engines, limit,
     )
 
     params = SearxngParams(
         q=q, categories=categories, engines=engines, language=language,
         pageno=pageno, time_range=time_range, safesearch=safesearch,
-        autocomplete=autocomplete,
+        autocomplete=autocomplete, max_results=limit,
     )
 
     # ── HTML mode -----------------------------------------------------------
@@ -68,13 +69,30 @@ async def _handle_searxng(
 @router.get(
     "/searxng",
     response_model=None,
+    responses={
+        200: {
+            "model": SearxngResponse,
+            "description": "SearXNG JSON response (format=json) or HTML results page (format=html)",
+        }
+    },
     status_code=status.HTTP_200_OK,
     summary="SearXNG-compatible search",
+    operation_id="search_searxng",
+    include_in_schema=False,
 )
 @router.get(
     "/searxng/search",
     response_model=None,
+    responses={
+        200: {
+            "model": SearxngResponse,
+            "description": "SearXNG JSON response (format=json) or HTML results page (format=html)",
+        }
+    },
+    status_code=status.HTTP_200_OK,
     summary="SearXNG-compatible search (Vane subpath)",
+    operation_id="search_searxng_vane",
+    include_in_schema=False,
 )
 async def compat_searxng(
     q: str = Query(..., description="Search query"),
@@ -86,6 +104,7 @@ async def compat_searxng(
     safesearch: int | None = Query(default=None, ge=0, le=2),
     autocomplete: str | None = Query(default=None),
     format: str = Query(default="json", description="Response format: json or html"),
+    limit: int | None = Query(default=None, ge=1, le=100, description="Maximum number of results to return. Alias for ``max_results``."),
     service: Annotated[SearxngCompatService, Depends(get_searxng_service)] = None,
 ) -> SearxngResponse | Response:
     """SearXNG JSON API compatibility endpoint.
@@ -98,9 +117,11 @@ async def compat_searxng(
     For all other queries: call LiteLLM search and normalize to SearXNG format.
 
     The ``format`` parameter accepts ``json`` (default) or ``html``.
+    The ``limit`` parameter is an alias for ``max_results`` and controls how
+    many results are returned.
     """
     return await _handle_searxng(
         q=q, categories=categories, engines=engines, language=language,
         pageno=pageno, time_range=time_range, safesearch=safesearch,
-        autocomplete=autocomplete, format=format, service=service,
+        autocomplete=autocomplete, format=format, limit=limit, service=service,
     )

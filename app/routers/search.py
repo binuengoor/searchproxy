@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.dependencies import get_litellm_client
 from app.services.litellm_search import LiteLLMSearchClient, SearchResponse
@@ -14,29 +14,97 @@ router = APIRouter(prefix="", tags=["search"])
 
 
 class PerplexityQuery(BaseModel):
-    """Request body for /compat/perplexity."""
+    """Request body for /compat/perplexity and /v1/search.
 
-    query: str = Field(..., description="Search query string")
-    max_results: int = Field(default=10, ge=1, le=100, description="Maximum results to return")
+    Supports two shapes:
+
+    - Simple (preferred): ``{\"query\": \"...\"}``
+    - Open WebUI / Perplexity-compatible: ``{\"messages\": [{\"role\": \"user\", \"content\": \"...\"}]}``
+
+    When ``messages`` is provided, the query is extracted from the **last**
+    ``user`` message. All other Perplexity fields (``model``, ``stream``,
+    ``return_related_questions``, ``search_recency_filter``) are accepted but
+    ignored.
+    """
+
+    query: str | None = Field(
+        default=None,
+        description="Search query string. Mutually exclusive with ``messages`` — provide one or the other.",
+    )
+    max_results: int = Field(
+        default=10, ge=1, le=100, description="Maximum results to return"
+    )
+    # —— Open WebUI / Perplexity compat fields (ignored) ——
+    messages: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="OpenAI-style messages array. If provided, query is extracted from the last user message.",
+    )
+    model: str | None = Field(default=None, description="Ignored — forwarded for Open WebUI compat.")
+    stream: bool | None = Field(default=None, description="Ignored — forwarded for Open WebUI compat.")
+    return_related_questions: bool | None = Field(
+        default=None, description="Ignored — forwarded for Open WebUI compat."
+    )
+    search_recency_filter: str | None = Field(
+        default=None, description="Ignored — forwarded for Open WebUI compat."
+    )
+
+    @model_validator(mode="after")
+    def _extract_query(self) -> "PerplexityQuery":
+        if not self.query and self.messages:
+            for msg in reversed(self.messages):
+                if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+                    self.query = msg["content"].strip()
+                    break
+        if not self.query:
+            raise ValueError("Either 'query' or 'messages' (with a user message) is required.")
+        return self
 
 
 @router.post(
     "/compat/perplexity",
     response_model=SearchResponse,
     status_code=status.HTTP_200_OK,
-    summary="Perplexity-compatible search",
+    summary="Quick web search for facts and lookups",
+    operation_id="search_perplexity",
 )
 async def compat_perplexity(
     body: PerplexityQuery,
     client: Annotated[LiteLLMSearchClient, Depends(get_litellm_client)],
 ) -> SearchResponse:
-    """Thin relay to LiteLLM search router.
+    """Use this tool for quick factual searches: current events, definitions,
+    simple lookups, or when the user asks a straightforward question that needs
+    a fast answer from the web. Returns a list of results with title, URL, and
+    snippet.
 
-    Request shape is Perplexity-compatible; response shape matches
-    ``{"results": [{"title": "", "url": "", "snippet": ""}]}``.
+    Accepts either ``{\"query\": \"...\"}`` or a full Open WebUI / Perplexity
+    shape with ``messages[]`` (query auto-extracted from the last user message).
     """
     log.info(
         "/compat/perplexity relay query='%s' max_results=%d",
+        body.query,
+        body.max_results,
+    )
+    return await client.search(query=body.query, max_results=body.max_results)
+
+
+@router.post(
+    "/v1/search",
+    response_model=SearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="OpenAI-compatible search alias",
+    operation_id="search_v1",
+    include_in_schema=False,
+)
+async def openai_search_alias(
+    body: PerplexityQuery,
+    client: Annotated[LiteLLMSearchClient, Depends(get_litellm_client)],
+) -> SearchResponse:
+    """Alias for /compat/perplexity — same request and response shape.
+
+    Provided for clients expecting an OpenAI-style ``/v1/search`` endpoint.
+    """
+    log.info(
+        "/v1/search alias query='%s' max_results=%d",
         body.query,
         body.max_results,
     )

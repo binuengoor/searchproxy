@@ -106,6 +106,7 @@ class SearxngParams(BaseModel):
     time_range: str | None = None
     safesearch: int | None = None
     autocomplete: str | None = None
+    max_results: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +242,7 @@ class SearxngCompatService:
         """Call LiteLLM search and normalize the response to SearXNG format."""
         litellm_resp: SearchResponse = await self._litellm.search(
             query=params.q,
-            max_results=10,
+            max_results=params.max_results or 10,
         )
 
         results = [

@@ -28,12 +28,26 @@ Pydantic (validation)
 
 ## Endpoints
 
-|| Endpoint | Method | Description |
-||----------|--------|-------------|
-|| `/compat/perplexity` | POST | Thin relay to LiteLLM search router. Perplexity-compatible responses. |
-|| `/compat/searxng` | GET | SearXNG JSON compatibility. Image/video passthrough to upstream SearXNG when configured. |
-| `/vane` | POST | Deep research proxy to Vane. Input: query + optional `optimization_mode` (`speed`/`balanced`/`quality`). Timeouts scale with mode: speed 60s, balanced 180s, quality 300s. Output: synthesized report with inline citations. Supports streaming (`?stream=true`). |
-| `/fetch` | POST | Fetch a single URL. Runs Crawl4AI → Jina Reader → anti-bot firebreak. |
+### MCP-visible tools (OpenAPI spec)
+
+These are the tools that MCPHub/Open WebUI expose to LLM models. Call one of these when the user's intent matches the capability.
+
+| Tool | Endpoint | Method | When to use |
+|------|----------|--------|-------------|
+| **search_perplexity** | `POST /compat/perplexity` | POST | Quick web search for facts, current events, definitions, and simple lookups. Accepts `{"query": "..."}` or a full Open WebUI `messages` array (query auto-extracted from the last user message). |
+| **research_vane** | `POST /vane` | POST | Deep research requiring synthesis across multiple sources. Slower than simple search but produces a comprehensive report with inline citations. Set `optimization_mode` to `speed`/`balanced`/`quality`. |
+| **fetch_url** | `POST /fetch` | POST | Fetch content from a specific URL the user provided. Runs Crawl4AI → Jina Reader → anti-bot firebreak. Returns markdown with metadata. |
+| **health** | `GET /health` | GET | Liveness probe. No auth required. |
+
+### Runtime-only endpoints (callable but hidden from OpenAPI spec)
+
+These endpoints work at runtime for backward compatibility but are excluded from the generated `/openapi.json` so MCPHub does not expose duplicate tools to the model.
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/v1/search` | POST | Alias for `/compat/perplexity` — OpenAI-style path. |
+| `/compat/searxng` | GET | SearXNG JSON compatibility. Image/video passthrough to upstream SearXNG when configured. Supports `?format=json` (default), `?format=html`, and `?limit=N`. |
+| `/compat/searxng/search` | GET | Vane-compatible subpath for SearXNG search. Same behavior as `/compat/searxng`. |
 | `/compat/firecrawl/v2/scrape` | POST | Firecrawl v2-compatible scrape. Wraps the same fetch chain; accepts full Firecrawl request schema. Unsupported params accepted and ignored. |
 
 ## Environment Configuration

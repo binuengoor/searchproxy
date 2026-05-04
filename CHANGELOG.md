@@ -2,6 +2,49 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.4.0] — Unreleased
+
+### Added (Tool consolidation — OpenAPI/MCP surface)
+- **Reduced visible endpoints from 7 to 3 (+ health)** — Hidden redundant aliases from OpenAPI spec so MCPHub/Open WebUI only exposes canonical tools:
+  - `POST /v1/search` → hidden (`include_in_schema=False`) — alias of `/compat/perplexity`
+  - `GET /compat/searxng` → hidden — SearXNG consumers (Vane) call it directly
+  - `GET /compat/searxng/search` → hidden — Vane subpath alias
+  - `POST /compat/firecrawl/v2/scrape` → hidden — Firecrawl-native SDKs call it directly
+  - Endpoints still work at runtime; only excluded from the generated `/openapi.json`
+- **Capability-focused descriptions** on all visible tools — Replaced mechanical summaries ("Perplexity-compatible search") with "when to use" guidance:
+  - `search_perplexity` — "Quick web search for facts and lookups"
+  - `research_vane` — "Deep research with synthesis and citations"
+  - `fetch_url` — "Fetch content from a specific URL"
+- **Spec size reduced from ~88 KB to ~17 KB** — Fewer endpoints = less context bloat in the LLM system prompt
+
+### Fixed (OpenAPI spec correctness + LLM consumability)
+- **`/v1/search` endpoint actually exists** — Previously documented in README but absent from code. Added `POST /v1/search` as a real alias to `/compat/perplexity` with the same request/response schema.
+- **`/compat/searxng` 200 response now shows `SearxngResponse` schema** — Previously returned empty `{}` due to `response_model=None` and union return types. Now properly documents all response fields: `query`, `number_of_results`, `results[]` (with `title`, `url`, `content`, `engine`, `score`, `category`, and `extra='allow'` fields), `answers`, `corrections`, `suggestions`, `infoboxes`, `unresponsive_engines`.
+- **`/compat/firecrawl/v2/scrape` 200 response now shows `FirecrawlResponse` schema** — Previously returned `additionalProperties: true` (untyped dict). Now properly documents: `success` (boolean), `data` (with `markdown`, `html`, `metadata`), `error` (string on failure).
+- **`/vane` `optimization_mode` parameter now has `enum`** — Spec now explicitly lists `"speed"`, `"balanced"`, `"quality"` with timeout descriptions. MCP clients and Open WebUI can now show a dropdown instead of a free-text field.
+- **`/fetch` `format` query param description clarified** — Now reads: "Response format: markdown (default; currently the only supported format). Future: text, html." Eliminates ambiguity about what the parameter does.
+- **All endpoints now accept Open WebUI's full Perplexity request shape** — Models (Open WebUI, Claude Code, etc.) often send the full Perplexity/ChatGPT payload including `messages`, `model`, `stream`, `return_related_questions`, `search_recency_filter` to every search/research endpoint. Instead of 422 errors:
+  - `PerplexityQuery` (used by `/compat/perplexity` and `/v1/search`) now accepts `messages` array and extracts `query` from the last `user` message.
+  - `VaneRequest` (used by `/vane`) now also accepts `messages` array and extracts `query` from the last `user` message.
+  - All other Perplexity fields (`model`, `stream`, `return_related_questions`, `search_recency_filter`) are accepted and silently ignored.
+  - This prevents 422 errors when LLM clients send their standard chat-completion-shaped payloads.
+- **`/compat/searxng` and `/compat/searxng/search` now accept `limit` parameter** — LLM clients almost always hallucinate a `limit` parameter when calling search APIs. Added `limit` as an alias for `max_results` with the same `ge=1, le=100` constraints. Passed through to LiteLLM search.
+- **All endpoints now have explicit `operation_id`** — Clean, readable IDs for MCP tool naming:
+  - `search_perplexity` → `POST /compat/perplexity`
+  - `search_v1` → `POST /v1/search`
+  - `search_searxng` → `GET /compat/searxng`
+  - `search_searxng_vane` → `GET /compat/searxng/search`
+  - `research_vane` → `POST /vane`
+  - `fetch_url` → `POST /fetch`
+  - `scrape_firecrawl` → `POST /compat/firecrawl/v2/scrape`
+  - `health` → `GET /health`
+- **`/health` endpoint now has a typed `HealthResponse` schema** — Previously returned `dict[str, str]` which produced an empty object schema in OpenAPI. Now properly documents `{ "status": "ok" }`.
+
+### Architecture
+- All response schemas in OpenAPI now match actual runtime types. No more `dict[str, Any]` or `response_model=None` hiding schemas from spec consumers.
+- Consistent pattern: union-return handlers (JSON vs HTML) use `responses={200: {"model": ...}}` annotations to expose JSON schema while keeping runtime flexibility.
+- `model_validator` on `PerplexityQuery` and `VaneRequest` extracts query from `messages` at validation time — no runtime changes needed in service layer.
+
 ## [0.1.0] — Unreleased
 
 ### Added

@@ -7,10 +7,18 @@ from typing import AsyncGenerator, Any
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from starlette.responses import RedirectResponse
 
 from app.config import settings
 from app.openapi_deref import dereference
+
+
+class HealthResponse(BaseModel):
+    """Liveness probe response."""
+
+    status: str = "ok"
+
 
 # Module-level shared client, initialized in lifespan
 _client: httpx.AsyncClient | None = None
@@ -101,10 +109,10 @@ async def auth_middleware(request: Request, call_next: object) -> JSONResponse:
 # Health
 # ---------------------------------------------------------------------------
 
-@app.get("/health", tags=["health"])
-async def health() -> dict[str, str]:
+@app.get("/health", tags=["health"], response_model=HealthResponse, operation_id="health")
+async def health() -> HealthResponse:
     """Liveness probe. No auth required."""
-    return {"status": "ok"}
+    return HealthResponse(status="ok")
 
 
 @app.get("/", include_in_schema=False)

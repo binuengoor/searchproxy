@@ -4,15 +4,25 @@ Self-hosted web search gateway. Thin relay to a LiteLLM router for search, multi
 
 ## What It Does
 
+### MCP-visible tools (OpenAPI spec — what LLM models see)
+
+| Tool | Endpoint | Purpose |
+|------|----------|---------|
+| **search_perplexity** | `POST /compat/perplexity` | Quick web search. Perplexity-compatible relay through LiteLLM. Accepts `{"query": "..."}` or full Open WebUI `messages` array (auto-extracts query) |
+| **research_vane** | `POST /vane` | Deep research. Proxy to Vane with streaming support (`?stream=true`). `optimization_mode`: `speed`/`balanced`/`quality`. Accepts `messages` array (auto-extracts query) |
+| **fetch_url** | `POST /fetch` | Fetch any URL as markdown. Crawl4AI → Jina Reader → anti-bot firebreak |
+| **health** | `GET /health` | Liveness check |
+
+### Runtime-only endpoints (callable but hidden from MCP discovery)
+
+These endpoints work at runtime for backward compatibility but are excluded from the generated `/openapi.json`.
+
 | Endpoint | Purpose |
 |----------|---------|
-| `/compat/perplexity` | Perplexity-compatible search relay through LiteLLM |
-| `/v1/search` | OpenAI-compatible alias for `/compat/perplexity` |
-| `/compat/searxng` | SearXNG JSON-compatible search. Routes web to LiteLLM, images/video to SearXNG passthrough. Supports `?format=json` (default) and `?format=html` |
+| `/v1/search` | Alias for `/compat/perplexity` — OpenAI-style path |
+| `/compat/searxng` | SearXNG JSON-compatible search. Routes web to LiteLLM, images/video to SearXNG passthrough. Supports `?format=json` (default), `?format=html`, and `?limit=N` |
 | `/compat/searxng/search` | Vane-compatible subpath for SearXNG search |
-| `/vane` | Deep research. Proxy to Vane with streaming support (`?stream=true`) |
-| `/fetch` | Fetch any URL as markdown/text. Crawl4AI → Jina Reader → anti-bot firebreak |
-| `/health` | Liveness check |
+| `/compat/firecrawl/v2/scrape` | Firecrawl v2-compatible scrape. Wraps the same fetch chain; accepts full Firecrawl request schema |
 
 ## Quickstart
 

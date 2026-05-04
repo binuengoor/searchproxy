@@ -27,6 +27,23 @@ router = APIRouter(prefix="/compat/firecrawl", tags=["firecrawl"])
 # Request / response models
 # ---------------------------------------------------------------------------
 
+class FirecrawlData(BaseModel):
+    """Success payload for Firecrawl v2 /scrape."""
+    markdown: str | None = Field(default=None, description="Extracted markdown content")
+    html: str | None = Field(default=None, description="Raw HTML (not available in searchproxy)")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Page metadata (title, description, sourceURL, statusCode)")
+
+
+class FirecrawlResponse(BaseModel):
+    """Firecrawl v2 /scrape response envelope — success or failure.
+
+    Always HTTP 200. Check ``success`` to determine which fields are present.
+    """
+    success: bool = Field(description="Whether the scrape succeeded")
+    data: FirecrawlData | None = Field(default=None, description="Content and metadata on success")
+    error: str | None = Field(default=None, description="Human-readable failure reason")
+
+
 class ScrapeRequest(BaseModel):
     """Firecrawl v2 /scrape request body.
 
@@ -55,18 +72,24 @@ class ScrapeRequest(BaseModel):
 
 @router.post(
     "/v2/scrape",
-    response_model=dict[str, Any],
+    response_model=FirecrawlResponse,
     status_code=status.HTTP_200_OK,
     summary="Firecrawl v2-compatible scrape endpoint",
+    operation_id="scrape_firecrawl",
+    include_in_schema=False,
 )
 async def firecrawl_scrape(
     body: ScrapeRequest,
     chain: Annotated[FetchChain, Depends(get_fetch_chain)] = None,  # type: ignore[assignment]
-) -> dict[str, Any]:
+) -> FirecrawlResponse:
     """Scrape a URL through the tiered fetch chain, returning Firecrawl v2 shape.
 
     Unsupported parameters are silently ignored so that existing Firecrawl
     clients do not need to change their request bodies.
+
+    Response is always HTTP 200. Check ``success`` inside the JSON body:
+    - ``true``: ``data.markdown`` and ``data.metadata`` contain the result
+    - ``false``: ``error`` contains the failure reason
     """
     url = str(body.url)
     timeout_ms = body.timeout
@@ -99,4 +122,5 @@ async def firecrawl_scrape(
     # threading a timeout parameter through FetchChain. For now we use the
     # chain default (FETCH_TIMEOUT seconds) and document the limitation.
     result = await chain.execute(url)
-    return build_firecrawl_response(result)
+    raw = build_firecrawl_response(result)
+    return FirecrawlResponse(**raw)

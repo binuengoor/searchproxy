@@ -46,11 +46,13 @@ Thumbs.db
 *.log
 logs/
 
-# Project working directory (gitignored per project convention)
+# Project working directory (local planning, not for version control)
 project/
 
+# Hermes agent plans
+.hermes/
+
 # Docker
-.dockerignore
 docker-compose.override.yml
 
 # pytest

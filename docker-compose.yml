@@ -1,16 +1,14 @@
 services:
   searchproxy:
-    image: searchproxy:latest
+    image: ghcr.io/binuengoor/searchproxy:latest
     container_name: searchproxy
     ports:
       - "8080:8080"
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
-    # Use public DNS to avoid Pi-hole/AdGuard blocking anti-bot APIs
     dns:
       - 8.8.8.8
       - 1.1.1.1
-    # Optional: use host network if upstream services on the host are unreachable
-    # from the default bridge. Uncomment on Linux hosts only.
-    # network_mode: host

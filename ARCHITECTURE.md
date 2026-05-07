@@ -212,7 +212,7 @@ Every request/response pair is captured to a SQLite database via a pure ASGI mid
 
 **Excluded from logging:** `/health`, `/`, `/docs`, `/redoc`, `/openapi.json`, `/logs` — prevents noise and circular self-logging.
 
-**Retention:** Configurable via `OBSERVABILITY_RETENTION_DAYS` (default 7). Old records are purged on startup.
+**Retention:** Configurable via `OBSERVABILITY_RETENTION_DAYS` (default 7). Old records are purged automatically at startup and then every 6 hours by a background task. You can also clear all records manually via the **Clear All** button in the `/logs` UI, or by calling `DELETE /api/logs`. After any deletion, `VACUUM` runs to reclaim disk space.
 
 **Access:**
 - **Browser:** `GET /logs` — dark-themed HTML table with live refresh (10s), field filters, pagination, click-to-expand detail.

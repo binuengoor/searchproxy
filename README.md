@@ -80,6 +80,18 @@ All via environment variables (see `.env.example`):
 | `SEARCHPROXY_REQUIRE_AUTH` | No | Default `false` |
 | `SEARCHPROXY_API_KEY` | No | Required when auth is enabled |
 | `LOG_LEVEL` | No | `DEBUG`, `INFO` (default), `WARNING`, `ERROR` |
+| `OBSERVABILITY_ENABLED` | No | Enable SQLite request logging. Default `false` |
+| `OBSERVABILITY_DB_PATH` | No | SQLite path. Default `/data/observability.db` |
+| `OBSERVABILITY_RETENTION_DAYS` | No | Auto-purge records older than N days. Default `7` |
+
+## Observability
+
+Request/response pairs are captured to an in-container SQLite database. No external services needed.
+
+- **Browser UI:** `GET /logs` — dark-themed table, live refresh, filters, click-to-expand
+- **JSON API:** `GET /api/logs?limit=20&source=searxng`
+- **Retention:** Auto-purges old records every 6 hours based on `OBSERVABILITY_RETENTION_DAYS`
+- **Manual clear:** **Clear All** button in `/logs`, or `DELETE /api/logs`
 
 ## Architecture
 

@@ -68,3 +68,6 @@ dmypy.json
 
 # uv
 uv.lock
+# Observability SQLite DB (runtime data, not version controlled)
+data/
+*.db

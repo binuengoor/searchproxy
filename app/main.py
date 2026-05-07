@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -12,6 +13,8 @@ from pydantic import BaseModel
 from starlette.responses import RedirectResponse
 
 from app.config import settings
+from app.observability import init_store, ObservabilityStore
+from app.middleware import request_logger as _request_logger_module
 from app.openapi_deref import dereference
 
 
@@ -34,6 +37,16 @@ def get_client() -> httpx.AsyncClient:
     return _client
 
 
+async def _purge_loop(store: ObservabilityStore) -> None:
+    """Background task: purge old observability records every 6 hours."""
+    while True:
+        try:
+            await store.purge_old()
+        except Exception as exc:
+            log.warning("Observability purge failed: %s", exc)
+        await asyncio.sleep(6 * 3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage httpx client lifecycle across startup/shutdown."""
@@ -47,8 +60,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         timeout=httpx.Timeout(60.0),  # fallback; all services override with their own timeouts
         follow_redirects=True,
     )
+    # --- Observability ---
+    from app.routers.logs import router as logs_router  # avoid circular import
+    app.include_router(logs_router)
+    _store = init_store(settings)
+    _purge_task: asyncio.Task | None = None
+    if settings.OBSERVABILITY_ENABLED:
+        log.info("Observability enabled (retention=%sd)", settings.OBSERVABILITY_RETENTION_DAYS)
+        _request_logger_module._store = _store
+        _request_logger_module._settings = settings
+        # Run one purge immediately on startup, then start background loop
+        try:
+            await _store.purge_old()
+        except Exception as exc:
+            log.warning("Initial observability purge failed: %s", exc)
+        _purge_task = asyncio.create_task(_purge_loop(_store))
+
     yield
+
     log.info("Shutting down searchproxy")
+    if _purge_task is not None:
+        _purge_task.cancel()
+        try:
+            await _purge_task
+        except asyncio.CancelledError:
+            pass
     if _client is not None:
         await _client.aclose()
         _client = None
@@ -76,6 +112,10 @@ def _dereferenced_openapi() -> dict[str, Any]:
 
 app.openapi = _dereferenced_openapi  # type: ignore[method-assign]
 
+# Register observability middleware at import time.
+# The middleware uses module-level variables (_store, _settings)
+# set later in lifespan; until then it passes through.
+app.add_middleware(_request_logger_module.ObservabilityMiddleware)
 
 # ---------------------------------------------------------------------------
 # API key middleware
@@ -164,6 +204,7 @@ async def root() -> RedirectResponse:
 # ---------------------------------------------------------------------------
 
 from app.routers import search, searxng, vane, fetch, firecrawl
+
 app.include_router(search.router)
 app.include_router(searxng.router)
 app.include_router(vane.router)

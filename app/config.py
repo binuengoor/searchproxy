@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     # --- Logging ---
     LOG_LEVEL: str = Field(default="INFO")
 
+    # --- Observability ---
+    OBSERVABILITY_ENABLED: bool = Field(default=False)
+    OBSERVABILITY_DB_PATH: str = Field(default="/data/observability.db")
+    OBSERVABILITY_RETENTION_DAYS: int = Field(default=7)
+
     # --- Timeouts ---
     FETCH_TIMEOUT: int = Field(default=30)
     SEARCH_TIMEOUT: int = Field(default=15)

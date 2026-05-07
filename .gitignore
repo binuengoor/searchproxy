@@ -71,3 +71,9 @@ uv.lock
 # Observability SQLite DB (runtime data, not version controlled)
 data/
 *.db
+
+# Stale virtual environments
+list/
+
+# Hermes agent local plans
+.hermes/

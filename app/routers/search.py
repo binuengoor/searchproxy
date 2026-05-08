@@ -19,8 +19,8 @@ class PerplexityQuery(BaseModel):
 
     Supports two shapes:
 
-    - Simple (preferred): ``{\"query\": \"...\"}``
-    - Open WebUI / Perplexity-compatible: ``{\"messages\": [{\"role\": \"user\", \"content\": \"...\"}]}``
+    - Simple (preferred): ``{"query": "..."}``
+    - Open WebUI / Perplexity-compatible: ``{"messages": [{"role": "user", "content": "..."}]}``
 
     When ``messages`` is provided, the query is extracted from the **last**
     ``user`` message. All other Perplexity fields (``model``, ``stream``,
@@ -76,43 +76,24 @@ class PerplexityQuery(BaseModel):
         return self
 
 
-SEARCH_DESCRIPTION = """\
-Quick web search returning titles, URLs, and short snippets.
-
-Use this for **fast factual lookups** — a definition, a date, a single fact, 
-or any question where a list of search result snippets is sufficient. This is 
-the fastest search endpoint (~1-3s).
-
-**When to choose this endpoint:**
-- Quick factual questions: "What is the capital of France?", "Who won the 2024 Super Bowl?"
-- Definitions, spelling checks, simple lookups
-- When you only need search result snippets, not full page content
-
-**When NOT to use this endpoint:**
-- When you need a **cited, synthesized answer** from multiple sources — use `/v1/retrieve` instead
-- When you need **deep research** with a comprehensive report — use `/vane` instead
-- When the user provides a **specific URL** to read — use `/fetch` instead
-"""
-
 @router.post(
     "/compat/perplexity",
     response_model=SearchResponse,
     status_code=status.HTTP_200_OK,
-    summary="Quick web search for facts and lookups",
-    description=SEARCH_DESCRIPTION,
-    operation_id="search_perplexity",
+    summary="Compatibility search — returns snippets only",
+    description="Compatibility endpoint for Open WebUI integration. Returns search snippets without fetching or synthesis. Hidden from OpenAPI spec — agents should use /v1/retrieve instead.",
+    operation_id="search_perplexity_compat",
+    include_in_schema=False,
 )
 async def compat_perplexity(
     body: PerplexityQuery,
     client: Annotated[LiteLLMSearchClient, Depends(get_litellm_client)],
 ) -> SearchResponse:
-    """Use this tool for quick factual searches: current events, definitions,
-    simple lookups, or when the user asks a straightforward question that needs
-    a fast answer from the web. Returns a list of results with title, URL, and
-    snippet.
+    """Compatibility endpoint for Open WebUI / Perplexity clients.
 
-    Accepts either ``{\"query\": \"...\"}`` or a full Open WebUI / Perplexity
-    shape with ``messages[]`` (query auto-extracted from the last user message).
+    Returns search result snippets only (no fetch, no synthesis).
+    Accepts either ``{"query": "..."}`` or a full Perplexity shape with
+    ``messages[]`` (query auto-extracted from the last user message).
     """
     log.info(
         "/compat/perplexity relay query='%s' max_results=%d",

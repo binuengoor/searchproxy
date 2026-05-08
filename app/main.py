@@ -113,18 +113,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="searchproxy",
     description=(
-        "Self-hosted search gateway consolidating multiple search and fetch providers "
-        "behind OpenAPI-compatible endpoints.\n\n"
-        "Provides four distinct capabilities:\n\n"
-        "**/compat/perplexity** — Fast web search for quick factual lookups. Returns "
-        "title, URL, and snippet. Use when you need a fast answer to a straightforward question.\n\n"
-        "**/v1/retrieve** — Research endpoint: search, rerank, fetch, synthesize. "
-        "Returns inline [N] citations and source URLs. Use for sourced answers from multiple web sources (5-15s).\n\n"
-        "**/vane** — Deep research with full synthesis. Produces comprehensive reports (60-300s). "
-        "Use for complex, analytical research questions.\n\n"
-        "**/fetch** — Read a specific URL. Returns full markdown via tiered fetch chain. "
-        "Use when the user provides a URL to read or summarize.\n\n"
-        "**/metrics** — Infrastructure monitoring (Prometheus format). NOT a search tool."
+        "Self-hosted search gateway for AI agents.\n\n"
+        "Three agent-facing tools:\n\n"
+        "**/v1/retrieve** — Search → rerank → fetch → synthesize. Returns a cited "
+        "answer with inline [N] citations and source URLs. Use as the default search tool "
+        "for any question requiring web-sourced information (5–15s).\n\n"
+        "**/vane** — Deep iterative research. Produces comprehensive analytical reports. "
+        "Use for complex, multi-faceted research questions (60–300s).\n\n"
+        "**/fetch** — Read a specific URL. Returns full markdown content via a tiered "
+        "fetch chain (Crawl4AI → Jina → anti-bot). Use when the user provides a URL.\n\n"
+        "Additional endpoints (/compat/perplexity, /compat/searxng, /compat/firecrawl) "
+        "exist for Open WebUI and legacy client compatibility but are hidden from the "
+        "OpenAPI spec — agents should use the three primary tools above.\n\n"
+        "**/metrics** — Prometheus monitoring. NOT a search tool."
     ),
     version="0.7.0",
     lifespan=lifespan,

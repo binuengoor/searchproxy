@@ -6,16 +6,24 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 
-# Static routes always present (lifespan-independent).
-# Dynamic routes (/v1/search, /compat/searxng/search, /compat/firecrawl/*)
-# are registered during lifespan when LiteLLM is reachable, so we don't
-# assert them in unit tests.
-STATIC_EXPECTED_PATHS = {
+# Paths that MUST appear in the OpenAPI spec (agent-discoverable endpoints).
+# Compatibility endpoints (/compat/perplexity, /compat/searxng, /compat/firecrawl)
+# are include_in_schema=False — hidden from agents, used only by Open WebUI.
+OPENAPI_EXPECTED_PATHS = {
     "/health",
     "/fetch",
-    "/compat/perplexity",
+    "/v1/retrieve",
     "/vane",
     "/metrics",
+}
+
+# Paths that must NOT appear in the OpenAPI spec (compat-only, hidden from agents).
+HIDDEN_PATHS = {
+    "/compat/perplexity",
+    "/v1/search",
+    "/compat/searxng",
+    "/compat/searxng/search",
+    "/compat/firecrawl/scrape",
 }
 
 
@@ -45,16 +53,29 @@ async def test_openapi_version_is_3_0_3():
 
 
 @pytest.mark.anyio
-async def test_spec_contains_static_paths():
-    """OpenAPI spec contains all statically-registered endpoint paths."""
+async def test_spec_contains_agent_facing_paths():
+    """OpenAPI spec exposes only the three agent-facing tools + monitoring."""
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         resp = await client.get("/openapi.json")
         spec = resp.json()
         paths = set(spec.get("paths", {}).keys())
-        for expected in STATIC_EXPECTED_PATHS:
-            assert expected in paths, f"Missing path: {expected}. Got: {sorted(paths)}"
+        for expected in OPENAPI_EXPECTED_PATHS:
+            assert expected in paths, f"Missing agent path: {expected}. Got: {sorted(paths)}"
+
+
+@pytest.mark.anyio
+async def test_spec_hides_compat_endpoints():
+    """Compatibility endpoints are hidden from the OpenAPI spec."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/openapi.json")
+        spec = resp.json()
+        paths = set(spec.get("paths", {}).keys())
+        for hidden in HIDDEN_PATHS:
+            assert hidden not in paths, f"Hidden path {hidden} should not appear in OpenAPI spec"
 
 
 @pytest.mark.anyio

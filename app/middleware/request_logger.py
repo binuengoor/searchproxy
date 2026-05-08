@@ -12,6 +12,7 @@ import uuid
 from typing import Any
 
 from app.config import Settings
+from app.middleware.correlation import _current_correlation_id
 from app.observability import LogRecord, ObservabilityStore
 
 log = logging.getLogger(__name__)
@@ -174,6 +175,7 @@ class ObservabilityMiddleware:
                             response_body=resp_body,
                             error=None,
                             source=source,
+                            correlation_id=_current_correlation_id.get(""),
                         )
                     )
                 except Exception as exc:

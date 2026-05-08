@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import app.main
 import app.config
 from app.main import app as fastapi_app
 from app.dependencies import get_fetch_chain
@@ -134,17 +133,17 @@ async def test_firecrawl_scrape_auth_required(auth_client, mock_fetch_chain):
 @pytest.mark.anyio
 async def test_firecrawl_scrape_auth_rejected_without_token(client, mock_fetch_chain, monkeypatch):
     """When require_auth=true, missing token is rejected (401)."""
-    # Patch app.main.settings because main.py does "from app.config import settings"
-    # creating a local binding that does NOT update when we reassign app.config.settings.
-    monkeypatch.setattr(
-        app.main,
-        "settings",
-        app.config.Settings(SEARCHPROXY_REQUIRE_AUTH=True, SEARCHPROXY_API_KEY="real-key"),
+    # Patch app.config.settings — main.py uses _config_module.settings
+    # which is a live reference, so assigning app.config.settings works.
+    original = app.config.settings
+    app.config.settings = app.config.Settings(
+        SEARCHPROXY_REQUIRE_AUTH=True, SEARCHPROXY_API_KEY="real-key",
     )
-
-    response = await client.post("/compat/firecrawl/v2/scrape", json={"url": "https://example.com"})
-
-    assert response.status_code == 401
+    try:
+        response = await client.post("/compat/firecrawl/v2/scrape", json={"url": "https://example.com"})
+        assert response.status_code == 401
+    finally:
+        app.config.settings = original
 
 
 @pytest.mark.anyio

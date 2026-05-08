@@ -12,6 +12,8 @@ from app.config import Settings
 from app.services.content_cleaner import clean_content
 from app.services.models import FetchResult
 from app.services.crawl4ai import Crawl4AIClient
+from app.middleware.correlation import _current_correlation_id
+from app.services.metrics import get_collector
 from app.services.jina_reader import JinaReaderClient
 from app.services.scraperapi import ScraperAPIClient
 from app.services.scrape_do import ScrapeDoClient
@@ -103,6 +105,7 @@ class FetchChain:
                 )
                 return await self._firebreak(url)
             log.info("Crawl4AI succeeded for %s", url)
+            get_collector().inc_tier("crawl4ai", "success")
             result.markdown = clean_content(result.markdown, url=url)
             return result
 
@@ -128,6 +131,7 @@ class FetchChain:
                 )
                 return await self._firebreak(url)
             log.info("Jina Reader succeeded for %s", url)
+            get_collector().inc_tier("jina", "success")
             jina_result.markdown = clean_content(jina_result.markdown, url=url)
             return jina_result
 
@@ -144,6 +148,7 @@ class FetchChain:
             "Jina Reader failed for %s (not anti-bot) — all tiers exhausted",
             url,
         )
+        get_collector().inc_tier("jina", "fail")
         return jina_result
 
     async def _firebreak(self, url: str) -> FetchResult:
@@ -158,7 +163,9 @@ class FetchChain:
             if scrape_do_result.success:
                 scrape_do_result.markdown = clean_content(scrape_do_result.markdown, url=url)
                 log.info("Scrape.do succeeded for %s after cleaning", url)
+                get_collector().inc_tier("scrape_do", "success")
                 return scrape_do_result
+            get_collector().inc_tier("scrape_do", "fail")
             log.warning("Scrape.do failed for %s, trying ScraperAPI", url)
         else:
             log.info("Scrape.do skipped: SCRAPE_DO_API_KEY not set")
@@ -169,7 +176,9 @@ class FetchChain:
             if scraper_api_result.success:
                 scraper_api_result.markdown = clean_content(scraper_api_result.markdown, url=url)
                 log.info("ScraperAPI succeeded for %s after cleaning", url)
+                get_collector().inc_tier("scraperapi", "success")
                 return scraper_api_result
+            get_collector().inc_tier("scraperapi", "fail")
             log.warning("ScraperAPI failed for %s", url)
         else:
             log.info("ScraperAPI skipped: SCRAPERAPI_API_KEY not set")

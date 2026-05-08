@@ -62,6 +62,7 @@ class LogRecord:
     response_body: str
     error: str | None
     source: str
+    correlation_id: str = ""
 
 
 class ObservabilityStore:
@@ -125,6 +126,15 @@ class ObservabilityStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_request_id ON request_logs(request_id)"
             )
+            # Migrate: add correlation_id column if missing (existing DBs)
+            try:
+                conn.execute("ALTER TABLE request_logs ADD COLUMN correlation_id TEXT")
+                log.info("Added correlation_id column to request_logs")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_correlation_id ON request_logs(correlation_id)"
+            )
 
     async def insert(self, record: LogRecord) -> None:
         if not self._enabled:
@@ -139,8 +149,8 @@ class ObservabilityStore:
                     timestamp, request_id, method, path, query_params,
                     status_code, response_time_ms, client_ip, user_agent,
                     request_headers, request_body, response_headers,
-                    response_body, error, source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    response_body, error, source, correlation_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     datetime.now(timezone.utc).timestamp(),
@@ -158,6 +168,7 @@ class ObservabilityStore:
                     _truncate(record.response_body),
                     record.error or "",
                     record.source,
+                    record.correlation_id,
                 ),
             )
 

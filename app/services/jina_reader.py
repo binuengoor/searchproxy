@@ -22,7 +22,7 @@ class JinaReaderClient:
         self._client = client
         self._settings = settings
         self._timeout = httpx.Timeout(
-            timeout=float(settings.FETCH_TIMEOUT),
+            timeout=float(settings.JINA_TIMEOUT),
             connect=5.0,
         )
 

@@ -22,7 +22,7 @@ class Crawl4AIClient:
         self._client = client
         self._settings = settings
         self._timeout = httpx.Timeout(
-            timeout=float(settings.FETCH_TIMEOUT),
+            timeout=float(settings.CRAWL4AI_TIMEOUT),
             connect=5.0,
         )
 

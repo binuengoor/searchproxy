@@ -48,6 +48,7 @@ class Settings(BaseSettings):
 
     # --- Logging ---
     LOG_LEVEL: str = Field(default="INFO")
+    LOG_FORMAT: str = Field(default="text", description="Log format: text or json")
 
     # --- Observability ---
     OBSERVABILITY_ENABLED: bool = Field(default=False)
@@ -55,9 +56,12 @@ class Settings(BaseSettings):
     OBSERVABILITY_RETENTION_DAYS: int = Field(default=7)
 
     # --- Timeouts ---
-    FETCH_TIMEOUT: int = Field(default=30)
+    FETCH_TIMEOUT: int = Field(default=30)  # generic fallback; per-tier overrides below
     SEARCH_TIMEOUT: int = Field(default=15)
     VANE_TIMEOUT: int = Field(default=120)
+    CRAWL4AI_TIMEOUT: int = Field(default=15)
+    JINA_TIMEOUT: int = Field(default=15)
+    ANTIBOT_TIMEOUT: int = Field(default=45)
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)

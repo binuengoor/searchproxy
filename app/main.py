@@ -12,10 +12,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.responses import RedirectResponse
 
-from app.config import settings
+import app.config as _config_module
 from app.observability import init_store, ObservabilityStore
 from app.middleware import request_logger as _request_logger_module
+from app.middleware.correlation import CorrelationIdMiddleware
+from app.middleware.json_formatter import JsonFormatter, CorrelationIdFilter
 from app.openapi_deref import dereference
+from app.services.metrics import get_collector
 
 
 class HealthResponse(BaseModel):
@@ -51,11 +54,28 @@ async def _purge_loop(store: ObservabilityStore) -> None:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage httpx client lifecycle across startup/shutdown."""
     global _client
-    logging.basicConfig(
-        level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
-    log.info("Starting searchproxy")
+
+    # --- Logging setup ---
+    log_level = getattr(logging, _config_module.settings.LOG_LEVEL.upper(), logging.INFO)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Remove default handlers added by basicConfig in previous runs or by third-party code
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    handler = logging.StreamHandler()
+    if _config_module.settings.LOG_FORMAT.lower() == "json":
+        handler.setFormatter(JsonFormatter())
+        # Attach correlation ID filter so all log records include it
+        handler.addFilter(CorrelationIdFilter())
+    else:
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+        )
+    root_logger.addHandler(handler)
+
+    log.info("Starting searchproxy (log_format=%s)", _config_module.settings.LOG_FORMAT)
     _client = httpx.AsyncClient(
         timeout=httpx.Timeout(60.0),  # fallback; all services override with their own timeouts
         follow_redirects=True,
@@ -63,12 +83,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # --- Observability ---
     from app.routers.logs import router as logs_router  # avoid circular import
     app.include_router(logs_router)
-    _store = init_store(settings)
+    _store = init_store(_config_module.settings)
     _purge_task: asyncio.Task | None = None
-    if settings.OBSERVABILITY_ENABLED:
-        log.info("Observability enabled (retention=%sd)", settings.OBSERVABILITY_RETENTION_DAYS)
+    if _config_module.settings.OBSERVABILITY_ENABLED:
+        log.info("Observability enabled (retention=%sd)", _config_module.settings.OBSERVABILITY_RETENTION_DAYS)
         _request_logger_module._store = _store
-        _request_logger_module._settings = settings
+        _request_logger_module._settings = _config_module.settings
         # Run one purge immediately on startup, then start background loop
         try:
             await _store.purge_old()
@@ -112,6 +132,10 @@ def _dereferenced_openapi() -> dict[str, Any]:
 
 app.openapi = _dereferenced_openapi  # type: ignore[method-assign]
 
+# Register correlation ID middleware first (outermost) so all downstream
+# middleware and route handlers can access the correlation ID.
+app.add_middleware(CorrelationIdMiddleware)
+
 # Register observability middleware at import time.
 # The middleware uses module-level variables (_store, _settings)
 # set later in lifespan; until then it passes through.
@@ -121,7 +145,7 @@ app.add_middleware(_request_logger_module.ObservabilityMiddleware)
 # API key middleware
 # ---------------------------------------------------------------------------
 
-EXCLUDED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc", "/"}
+EXCLUDED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc", "/", "/metrics"}
 
 
 @app.middleware("http")
@@ -160,7 +184,7 @@ async def mcp_body_unwrap(request: Request, call_next: object) -> JSONResponse:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next: object) -> JSONResponse:
     """Require Bearer token on all routes if SEARCHPROXY_REQUIRE_AUTH is enabled."""
-    if not settings.SEARCHPROXY_REQUIRE_AUTH:
+    if not _config_module.settings.SEARCHPROXY_REQUIRE_AUTH:
         return await call_next(request)  # type: ignore[return-value]
 
     if request.url.path in EXCLUDED_PATHS:
@@ -174,13 +198,32 @@ async def auth_middleware(request: Request, call_next: object) -> JSONResponse:
         )
 
     token = auth_header[7:]
-    if token != settings.SEARCHPROXY_API_KEY:
+    if token != _config_module.settings.SEARCHPROXY_API_KEY:
         return JSONResponse(
             status_code=401,
             content={"detail": "Invalid API key"},
         )
 
     return await call_next(request)  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# Metrics request counting
+# ---------------------------------------------------------------------------
+
+_metrics = get_collector()
+
+_METRICS_EXCLUDED = EXCLUDED_PATHS | {"/metrics"}
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next: object) -> JSONResponse:
+    """Count every non-excluded request for /metrics endpoint."""
+    response = await call_next(request)
+    path = request.url.path
+    if path not in _METRICS_EXCLUDED:
+        _metrics.inc_requests(request.method, path, response.status_code)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -203,10 +246,11 @@ async def root() -> RedirectResponse:
 # Routers
 # ---------------------------------------------------------------------------
 
-from app.routers import search, searxng, vane, fetch, firecrawl
+from app.routers import search, searxng, vane, fetch, firecrawl, metrics
 
 app.include_router(search.router)
 app.include_router(searxng.router)
 app.include_router(vane.router)
 app.include_router(fetch.router)
 app.include_router(firecrawl.router)
+app.include_router(metrics.router)

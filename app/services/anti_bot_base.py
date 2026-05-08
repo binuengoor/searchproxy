@@ -48,7 +48,7 @@ class AntiBotClient:
         self._client = client
         self._settings = settings
         self._timeout = httpx.Timeout(
-            timeout=float(settings.FETCH_TIMEOUT),
+            timeout=float(settings.ANTIBOT_TIMEOUT),
             connect=5.0,
         )
         self._tracker: dict[str, int] = {

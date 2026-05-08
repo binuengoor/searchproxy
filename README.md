@@ -12,6 +12,7 @@ Self-hosted web search gateway. Thin relay to a LiteLLM router for search, multi
 | **research_vane** | `POST /vane` | Deep research. Proxy to Vane with streaming support (`?stream=true`). `optimization_mode`: `speed`/`balanced`/`quality`. Accepts `messages` array (auto-extracts query) |
 | **fetch_url** | `POST /fetch` | Fetch any URL as markdown. Crawl4AI → Jina Reader → anti-bot firebreak |
 | **health** | `GET /health` | Liveness check |
+| **metrics** | `GET /metrics` | Prometheus-style request & fetch chain metrics (no auth) |
 
 ### Runtime-only endpoints (callable but hidden from MCP discovery)
 
@@ -83,6 +84,10 @@ All via environment variables (see `.env.example`):
 | `OBSERVABILITY_ENABLED` | No | Enable SQLite request logging. Default `false` |
 | `OBSERVABILITY_DB_PATH` | No | SQLite path. Default `/data/observability.db` |
 | `OBSERVABILITY_RETENTION_DAYS` | No | Auto-purge records older than N days. Default `7` |
+| `LOG_FORMAT` | No | `text` (default) or `json` for structured logging |
+| `CRAWL4AI_TIMEOUT` | No | Per-tier fetch timeout. Default `15` |
+| `JINA_TIMEOUT` | No | Per-tier fetch timeout. Default `15` |
+| `ANTIBOT_TIMEOUT` | No | Per-tier fetch timeout. Default `45` |
 
 ## Observability
 

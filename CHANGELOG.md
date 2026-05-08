@@ -2,6 +2,38 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.6.0] — 2026-05-08
+
+### Added
+
+**Stage 1.1: Per-tier fetch timeouts**
+- `CRAWL4AI_TIMEOUT=15`, `JINA_TIMEOUT=15`, `ANTIBOT_TIMEOUT=45` — each fetch tier now has its own timeout instead of sharing a generic `FETCH_TIMEOUT=30`. Anti-bot firebreak pages get the headroom they need; fast Crawl4AI pages don't wait for slow tiers.
+- Updated `Crawl4AIClient`, `JinaReaderClient`, and `AntiBotClient` to use their respective timeouts.
+- `.env.example` updated with all new timeout variables.
+
+**Stage 1.2: Structured logging + correlation_id**
+- `CorrelationIdMiddleware` (ASGI) — extracts `X-Correlation-ID` header or generates UUID4, stored in `request.state` and a `ContextVar` for async-safe access across the request lifecycle.
+- `CorrelationIdFilter` + `JsonFormatter` — structured JSON logging when `LOG_FORMAT=json`; text logging when `LOG_FORMAT=text` (default).
+- `LOG_FORMAT` env var added to `app/config.py` (`text` | `json`).
+- `app/main.py` fully rewritten to wire middleware, JSON logging setup in lifespan, and fix stale binding bug: changed `from app.config import settings` → `import app.config as _config_module` so that runtime settings changes (e.g., in tests) take effect immediately.
+- `app/observability.py` — `correlation_id` field added to `LogRecord` dataclass and SQLite schema, including `ALTER TABLE` migration for existing databases.
+- `app/middleware/request_logger.py` — wires `correlation_id` from `ContextVar` into `LogRecord`.
+- `app/services/fetch_chain.py` — imports `get_correlation_id` for future log correlation.
+
+**Stage 1.3: /metrics endpoint (Prometheus-style)**
+- `app/services/metrics.py` — `MetricsCollector` singleton with `inc_requests(method, endpoint, status)` and `inc_tier(tier, outcome)` counters, Prometheus exposition format.
+- `app/routers/metrics.py` — `GET /metrics` endpoint returning `text/plain` Prometheus metrics, excluded from auth.
+- `app/main.py` — `metrics_middleware` (`@app.middleware`) for request counting, `EXCLUDED_PATHS` includes `/metrics`.
+- `app/services/fetch_chain.py` — `inc_tier()` calls added for success/fail at each tier (crawl4ai, jina, scrape_do, scraperapi).
+
+**Stage 1.4: Close test gaps**
+- `tests/test_auth.py` — 7 auth tests: health without auth, auth disabled, auth blocks unauthenticated, correct token, wrong token, excluded paths, metrics excluded, missing Bearer prefix.
+- `tests/test_openapi.py` — 6 OpenAPI tests: spec returns 200, version 3.0.3, static paths present, no $ref, health in spec, metrics Prometheus format.
+- `tests/conftest.py` — updated `client`/`auth_client` fixtures.
+- `tests/test_firecrawl.py` — fixed auth test to use `app.config.settings` instead of `app.main.settings`.
+
+**Test results: 67 passed, 2 pre-existing failures** (null content in messages, unrelated).
+
 ## [0.5.1] — 2026-05-04
 
 ### Fixed
@@ -140,4 +172,3 @@ All notable changes to SearchProxy will be documented in this file.
 - Jina Reranker integration for `/search` response post-processing.
 - Request/response caching with TTL for identical search queries.
 - Configurable fetch chain depth via query param.
-

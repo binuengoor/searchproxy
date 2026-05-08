@@ -23,6 +23,44 @@ class Settings(BaseSettings):
     LITELLM_SEARCH_URL: str = Field(default="http://litellm-host:4000/search/unifiedsearch")
     LITELLM_API_KEY: str | None = Field(default=None)
 
+    # --- Retrieve: LiteLLM Chat (synthesis) ---
+    LITELLM_CHAT_URL: str = Field(
+        default="http://host.docker.internal:4000/v1/chat/completions",
+        description="LiteLLM chat completions endpoint for /v1/retrieve synthesis.",
+    )
+    LITELLM_CHAT_MODEL: str = Field(
+        default="openai/gpt-4o-mini",
+        description="LiteLLM model name for synthesis. Must match a model available on your LiteLLM proxy.",
+    )
+
+    # --- Retrieve: BGE Reranker (cf-inference) ---
+    CF_RERANK_URL: str = Field(
+        default="https://cf-inference.binuengoor.workers.dev/v1/rerank",
+        description="BGE reranker endpoint (cf-inference /v1/rerank).",
+    )
+    CF_RERANK_API_KEY: str | None = Field(
+        default=None,
+        description="API key for cf-inference reranker. Omit if the endpoint is open.",
+    )
+    CF_RERANK_MODEL: str = Field(
+        default="@cf/baai/bge-reranker-base",
+        description="Model identifier for cf-inference reranker.",
+    )
+
+    # --- Retrieve: tuning ---
+    RETRIEVE_MAX_CONTENT_PER_SOURCE: int = Field(
+        default=4000,
+        description="Max characters of fetched content per source for synthesis.",
+    )
+    RETRIEVE_MAX_TOTAL_CONTENT: int = Field(
+        default=20000,
+        description="Max total characters across all sources for synthesis prompt.",
+    )
+    RETRIEVE_RERANK_TOP_K: int = Field(
+        default=20,
+        description="Number of search results to send to the reranker.",
+    )
+
     # --- Vane deep research ---
     VANE_URL: str = Field(default="http://vane-host:3001")
     VANE_CHAT_PROVIDER_ID: str | None = Field(default=None)

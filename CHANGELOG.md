@@ -2,6 +2,36 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.7.0] — 2026-05-09
+
+### Added
+
+**Stage 2: /v1/retrieve — Search → Rerank → Fetch → Synthesize**
+
+New endpoint: POST /v1/retrieve — one-shot research pipeline that combines search, reranking, content fetching, and LLM synthesis into a single call.
+
+- app/services/rerank_service.py — BGE reranker client for cf-inference. Calls /v1/rerank on the Cloudflare Workers AI backend. Falls back gracefully: if reranking fails, original search order is preserved.
+- app/services/synthesis_service.py — LiteLLM chat completions client. Builds a citation-instructed prompt from fetched source content, calls the configured chat model, and returns a synthesized answer with inline [N] citations.
+- app/services/retrieve_service.py — Full pipeline orchestrator: LiteLLM search → URL dedup → BGE rerank → parallel fetch (asyncio.gather) → per-source content chunking → total-content cap → LLM synthesis. Each step degrades independently (no rerank = original order, fetch failures = partial results, synthesis failure = raw source excerpts).
+- app/routers/retrieve.py — thin router exposing POST /v1/retrieve with RetrieveRequest/RetrieveResponse schemas.
+- app/schemas.py — added Citation, RetrieveRequest, RetrieveResponse, SourceChunk models.
+- app/dependencies.py — added get_rerank_service(), get_synthesis_service(), get_retrieve_service() factories.
+- app/config.py — 7 new config vars: LITELLM_CHAT_URL, LITELLM_CHAT_MODEL, CF_RERANK_URL, CF_RERANK_API_KEY, CF_RERANK_MODEL, RETRIEVE_MAX_CONTENT_PER_SOURCE, RETRIEVE_MAX_TOTAL_CONTENT, RETRIEVE_RERANK_TOP_K.
+- app/main.py — retrieve router registered.
+- .env and .env.example — documented all new vars.
+
+**Config additions:**
+- LITELLM_CHAT_URL — LiteLLM chat completions endpoint (default: http://host.docker.internal:4000/v1/chat/completions)
+- LITELLM_CHAT_MODEL — model name for synthesis (default: openai/gpt-4o-mini)
+- CF_RERANK_URL — cf-inference reranker endpoint
+- CF_RERANK_API_KEY — optional API key for cf-inference
+- CF_RERANK_MODEL — reranker model identifier (default: @cf/baai/bge-reranker-base)
+- RETRIEVE_MAX_CONTENT_PER_SOURCE — max chars per source (default: 4000)
+- RETRIEVE_MAX_TOTAL_CONTENT — max total chars across all sources (default: 20000)
+- RETRIEVE_RERANK_TOP_K — number of results to rerank (default: 20)
+
+**Tests: 77 passed** (8 new retrieve tests + 69 existing)
+
 ## [0.6.0] — 2026-05-08
 
 ### Added

@@ -153,7 +153,7 @@ async def mcp_body_unwrap(request: Request, call_next: object) -> JSONResponse:
     """Unwrap MCPHub's nested ``body`` key for POST/PUT/PATCH requests.
 
     When MCPHub generates tools from an OpenAPI spec, it wraps the request
-    body model inside a ``body`` key: ``{"body": {"query": "..."}}``.
+    body inside a ``body`` key: ``{"body": {"query": "..."}}``.
     FastAPI expects the fields at the top level, so this middleware detects
     the wrapper and rewrites the request body to flatten it.
     """
@@ -246,7 +246,7 @@ async def root() -> RedirectResponse:
 # Routers
 # ---------------------------------------------------------------------------
 
-from app.routers import search, searxng, vane, fetch, firecrawl, metrics
+from app.routers import search, searxng, vane, fetch, firecrawl, metrics, retrieve
 
 app.include_router(search.router)
 app.include_router(searxng.router)
@@ -254,3 +254,4 @@ app.include_router(vane.router)
 app.include_router(fetch.router)
 app.include_router(firecrawl.router)
 app.include_router(metrics.router)
+app.include_router(retrieve.router)

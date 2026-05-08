@@ -76,11 +76,30 @@ class PerplexityQuery(BaseModel):
         return self
 
 
+SEARCH_DESCRIPTION = """\
+Quick web search returning titles, URLs, and short snippets.
+
+Use this for **fast factual lookups** — a definition, a date, a single fact, 
+or any question where a list of search result snippets is sufficient. This is 
+the fastest search endpoint (~1-3s).
+
+**When to choose this endpoint:**
+- Quick factual questions: "What is the capital of France?", "Who won the 2024 Super Bowl?"
+- Definitions, spelling checks, simple lookups
+- When you only need search result snippets, not full page content
+
+**When NOT to use this endpoint:**
+- When you need a **cited, synthesized answer** from multiple sources — use `/v1/retrieve` instead
+- When you need **deep research** with a comprehensive report — use `/vane` instead
+- When the user provides a **specific URL** to read — use `/fetch` instead
+"""
+
 @router.post(
     "/compat/perplexity",
     response_model=SearchResponse,
     status_code=status.HTTP_200_OK,
     summary="Quick web search for facts and lookups",
+    description=SEARCH_DESCRIPTION,
     operation_id="search_perplexity",
 )
 async def compat_perplexity(

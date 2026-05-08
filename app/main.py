@@ -112,8 +112,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="searchproxy",
-    description="Self-hosted web search and content fetch gateway",
-    version="0.1.0",
+    description=(
+        "Self-hosted search gateway consolidating multiple search and fetch providers "
+        "behind OpenAPI-compatible endpoints.\n\n"
+        "Provides four distinct capabilities:\n\n"
+        "**/compat/perplexity** — Fast web search for quick factual lookups. Returns "
+        "title, URL, and snippet. Use when you need a fast answer to a straightforward question.\n\n"
+        "**/v1/retrieve** — Research endpoint: search, rerank, fetch, synthesize. "
+        "Returns inline [N] citations and source URLs. Use for sourced answers from multiple web sources (5-15s).\n\n"
+        "**/vane** — Deep research with full synthesis. Produces comprehensive reports (60-300s). "
+        "Use for complex, analytical research questions.\n\n"
+        "**/fetch** — Read a specific URL. Returns full markdown via tiered fetch chain. "
+        "Use when the user provides a URL to read or summarize.\n\n"
+        "**/metrics** — Infrastructure monitoring (Prometheus format). NOT a search tool."
+    ),
+    version="0.7.0",
     lifespan=lifespan,
 )
 # Force OpenAPI 3.0.3 for max client compatibility (MCPHub, Open WebUI).

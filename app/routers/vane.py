@@ -79,11 +79,36 @@ class VaneRequest(BaseModel):
         return self
 
 
+VANE_DESCRIPTION = """\
+Deep research endpoint that produces comprehensive, cited reports.
+
+Use this for **complex, multi-faceted, or analytical** questions that require
+deep reasoning across multiple sources — literature reviews, comparisons,
+investigative queries, or anything that needs a thorough, structured answer.
+
+**When to choose this endpoint:**
+- Research questions requiring deep analysis, not just quick facts
+- Multi-faceted topics where the user needs a comprehensive report
+- Questions where a simple search snippet isn't enough and you need the 
+  full picture synthesized from many sources
+
+**When NOT to use this endpoint:**
+- Quick factual lookups (a single fact or definition) — use 
+  `/compat/perplexity` instead (much faster)
+- Questions needing a sourced answer with inline citations but not a full
+  report — use `/v1/retrieve` instead (5-15s)
+- Reading a known URL — use `/fetch` instead
+
+**Latency:** 60s (speed mode), 180s (balanced), 300s (quality).
+Set `optimization_mode` to control depth vs. speed.
+"""
+
 @router.post(
     "/vane",
     response_model=VaneResearchResponse,
     status_code=status.HTTP_200_OK,
     summary="Deep research with synthesis and citations",
+    description=VANE_DESCRIPTION,
     operation_id="research_vane",
 )
 async def vane_research(

@@ -1,4 +1,4 @@
-"""/v1/retrieve — search → rerank → fetch → synthesize pipeline."""
+""" /v1/retrieve — search → rerank → fetch → synthesize pipeline."""
 
 from __future__ import annotations
 
@@ -15,11 +15,37 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["retrieve"])
 
 
+RETRIEVE_DESCRIPTION = """\
+One-shot research endpoint: search → rerank → fetch → synthesize.
+
+Use this when you need a **cited, factual answer** from the web — not just 
+links or snippets, but a synthesized response that cross-references multiple 
+sources with inline [N] citations.
+
+**When to choose this endpoint:**
+- User asks a question that requires looking up current information and getting
+  an accurate, sourced answer — e.g. "What is the latest on X?", "Compare A vs B"
+- You need sources cited inline in the answer, not just a list of links
+- You want faster (5–15s) results than deep research but more depth than a 
+  simple search
+
+**When NOT to use this endpoint:**
+- For quick factual lookups (a single fact, definition, or spelling) — use 
+  `/compat/perplexity` instead (faster, returns snippets)
+- For deep, multi-source analytical research (literature reviews, comprehensive
+  reports) — use `/vane` instead (slower, produces a full report)
+- To read a specific URL the user already has — use `/fetch` instead
+
+**Pipeline:** LiteLLM search → BGE rerank → Crawl4AI/Jina/anti-bot fetch → 
+LLM synthesis with citation prompt.
+"""
+
 @router.post(
     "/v1/retrieve",
     response_model=RetrieveResponse,
     status_code=status.HTTP_200_OK,
-    summary="Research a topic: search, fetch sources, synthesize an answer",
+    summary="Research a topic: search, rerank, fetch sources, synthesize a cited answer",
+    description=RETRIEVE_DESCRIPTION,
     operation_id="retrieve",
 )
 async def retrieve(

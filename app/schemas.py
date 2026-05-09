@@ -98,7 +98,7 @@ class SourceChunk(BaseModel):
         default=None,
         description="Length of fetched content in characters (post-cleaning, pre-truncation).",
     )
-    rerank_score: float | None = Field(
+    relevance_score: float | None = Field(
         default=None,
         description="BGE reranker relevance score for this source (0–1). Higher = more relevant.",
     )
@@ -128,7 +128,7 @@ class RetrieveResponse(BaseModel):
                             "content": "Apple today announced M3...",
                             "fetch_tier": "crawl4ai",
                             "content_length": 4200,
-                            "rerank_score": 0.95,
+                            "relevance_score": 0.95,
                             "fetch_time_ms": 1240.5,
                         }
                     ],

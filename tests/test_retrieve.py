@@ -128,7 +128,7 @@ async def test_retrieve_success_flow(
         src = data["sources"][0]
         assert "fetch_tier" in src
         assert "content_length" in src
-        assert "rerank_score" in src
+        assert "relevance_score" in src
         assert "fetch_time_ms" in src
     if data["citations"]:
         assert "relevance_score" in data["citations"][0]
@@ -399,7 +399,7 @@ async def test_retrieve_source_metadata_enrichment(
     mock_fetch: AsyncMock,
     mock_synthesize: AsyncMock,
 ):
-    """SourceChunk and Citation models carry fetch_tier, content_length, rerank_score, fetch_time_ms."""
+    """SourceChunk and Citation models carry fetch_tier, content_length, relevance_score, fetch_time_ms."""
     mock_search.return_value = SearchResponse(results=[
         SearchResult(title="Meta", url="https://meta.com", snippet="meta"),
     ])
@@ -425,7 +425,7 @@ async def test_retrieve_source_metadata_enrichment(
     src = data["sources"][0]
     assert src["fetch_tier"] == "crawl4ai"
     assert src["content_length"] == len(mock_fetch.return_value.markdown)
-    assert src["rerank_score"] == 0.92
+    assert src["relevance_score"] == 0.92
     assert src["fetch_time_ms"] == 1240.5
 
     assert len(data["citations"]) == 1
@@ -462,7 +462,7 @@ async def test_retrieve_no_synthesize_returns_metadata(
     src = data["sources"][0]
     assert src["fetch_tier"] == "jina"
     assert src["content_length"] == len(mock_fetch.return_value.markdown)
-    assert src["rerank_score"] == 0.88
+    assert src["relevance_score"] == 0.88
     assert src["fetch_time_ms"] == 850.0
 
     assert len(data["citations"]) == 1

@@ -205,7 +205,7 @@ class RetrieveService:
                 content=content,
                 fetch_tier=result.source or None,
                 content_length=raw_content_length,
-                rerank_score=relevance_score,
+                relevance_score=relevance_score,
                 fetch_time_ms=result.fetch_time_ms,
             ))
 
@@ -287,7 +287,7 @@ class RetrieveService:
 
         if not synthesize:
             citations = [
-                Citation(id=i + 1, url=s.url, title=s.title, relevance_score=s.rerank_score)
+                Citation(id=i + 1, url=s.url, title=s.title, relevance_score=s.relevance_score)
                 for i, s in enumerate(sources)
             ]
             return RetrieveResponse(
@@ -303,7 +303,7 @@ class RetrieveService:
 
         for i, citation in enumerate(citations):
             if i < len(sources) and citation.relevance_score is None:
-                citation.relevance_score = sources[i].rerank_score
+                citation.relevance_score = sources[i].relevance_score
 
         return RetrieveResponse(
             query=query,
@@ -357,7 +357,7 @@ class RetrieveService:
                 "id": i,
                 "url": src.url,
                 "title": src.title,
-                "relevance_score": src.rerank_score,
+                "relevance_score": src.relevance_score,
                 "fetch_tier": src.fetch_tier,
             }
             yield f"event: source\ndata: {json.dumps(source_event)}\n\n"

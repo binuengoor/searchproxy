@@ -63,6 +63,15 @@ All notable changes to SearchProxy will be documented in this file.
 
 ---
 
+### Fixed (post-v0.8.0 session)
+
+- **cf-inference reranker format translation** — Worker `handleRerank()` accepted OpenAI-style `documents: [...]` but Cloudflare Workers AI expects `contexts: [{text}]` and returns `response: [{id, score}]`, not `results`. Error 1101 on every call. Patched Worker to translate at the boundary: accept `documents`, forward `contexts`, map `response` back to `results`. (cf-inference commit `bae0358`).
+- **API key truncation in `.env`** — `CF_RERANK_API_KEY` was truncated by one character (missing trailing `e`) vs the cf-inference Worker secret. Produced silent 401 → searchproxy degraded gracefully → null `relevance_score` and `rerank_score` across all responses. Fixed by regenerating key in cf-inference and copying exact value to searchproxy `.env`.
+- **Field naming consistency** — `SourceChunk.rerank_score` renamed to `relevance_score` across `schemas.py`, `retrieve_service.py`, and `tests/test_retrieve.py`. Unified API surface: only `relevance_score` appears in both `Citation` and `SourceChunk`. (searchproxy commit `14fed5e`).
+
+
+---
+
 ## [0.7.0] — 2026-05-09
 
 ### Added

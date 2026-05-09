@@ -27,7 +27,7 @@ Compat bridges (hidden from OpenAPI, still functional): `/compat/perplexity`, `/
 ### 3a — Output Quality ✅
 
 - Better synthesis prompt — scales answer length to query complexity, enforces citation density, handles contradictions, calls out coverage gaps
-- Source metadata enrichment — `fetch_tier`, `content_length`, `rerank_score`, `fetch_time_ms` visible to clients
+- Source metadata enrichment — `fetch_tier`, `content_length`, `relevance_score`, `fetch_time_ms` visible to clients
 - Content quality gates — skip sources under 300 chars or detected paywall/login-wall
 
 ### 3b — Streaming for /v1/retrieve ✅

@@ -38,7 +38,7 @@
 #### 3a — Output Quality ✅
 
 - [x] Better synthesis prompt — structured, citation-dense prompt; length scales to query complexity
-- [x] Source metadata enrichment — `fetch_tier`, `content_length`, `rerank_score`, `fetch_time_ms` in SourceChunk; `relevance_score` in Citation
+- [x] Source metadata enrichment — `fetch_tier`, `content_length`, `relevance_score`, `fetch_time_ms` in SourceChunk; `relevance_score` in Citation
 - [x] Content quality gates — skip sources under 300 chars or detected paywall/login-wall before synthesis
 
 #### 3b — Streaming for /v1/retrieve ✅

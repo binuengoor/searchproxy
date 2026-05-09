@@ -108,7 +108,7 @@ Response (non-streaming):
       "content": "...",
       "fetch_tier": "crawl4ai",
       "content_length": 4200,
-      "rerank_score": 0.91,
+      "relevance_score": 0.91,
       "fetch_time_ms": 820.5
     }
   ]

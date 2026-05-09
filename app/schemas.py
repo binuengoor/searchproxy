@@ -34,6 +34,10 @@ class Citation(BaseModel):
     id: int = Field(..., description="Citation number referenced in the answer text, e.g. 1 for [1].")
     url: str = Field(..., description="Source URL.")
     title: str = Field(default="", description="Page title or snippet header.")
+    relevance_score: float | None = Field(
+        default=None,
+        description="BGE reranker relevance score for this source (0–1). Higher = more relevant.",
+    )
 
 
 class RetrieveRequest(BaseModel):
@@ -51,6 +55,7 @@ class RetrieveRequest(BaseModel):
                     "max_results": 10,
                     "fetch_top_k": 5,
                     "synthesize": True,
+                    "stream": False,
                 }
             ]
         }
@@ -73,6 +78,10 @@ class RetrieveRequest(BaseModel):
         default=True,
         description="If false, return fetched sources without LLM synthesis (raw markdown chunks).",
     )
+    stream: bool = Field(
+        default=False,
+        description="If true, return an SSE stream. Only applies when synthesize=true. Search/rerank/fetch still happen synchronously; only the LLM synthesis phase streams tokens.",
+    )
 
 
 class SourceChunk(BaseModel):
@@ -81,6 +90,22 @@ class SourceChunk(BaseModel):
     url: str = Field(..., description="Source URL.")
     title: str = Field(default="", description="Page title.")
     content: str = Field(default="", description="Chunked content (up to max_content_per_source chars).")
+    fetch_tier: str | None = Field(
+        default=None,
+        description="Which fetch tier produced this content: crawl4ai, jina, scrape_do, scraperapi.",
+    )
+    content_length: int | None = Field(
+        default=None,
+        description="Length of fetched content in characters (post-cleaning, pre-truncation).",
+    )
+    rerank_score: float | None = Field(
+        default=None,
+        description="BGE reranker relevance score for this source (0–1). Higher = more relevant.",
+    )
+    fetch_time_ms: float | None = Field(
+        default=None,
+        description="Time spent fetching this source in milliseconds.",
+    )
 
 
 class RetrieveResponse(BaseModel):
@@ -93,8 +118,19 @@ class RetrieveResponse(BaseModel):
                     "query": "Apple M3 chip announcement date",
                     "answer": "Apple announced the M3 chip in October 2023 [1]. The M3 family includes M3, M3 Pro, and M3 Max [2].",
                     "citations": [
-                        {"id": 1, "url": "https://apple.com/newsroom/...", "title": "Apple Unveils M3"},
-                        {"id": 2, "url": "https://theverge.com/...", "title": "Apple M3 Review"},
+                        {"id": 1, "url": "https://apple.com/newsroom/...", "title": "Apple Unveils M3", "relevance_score": 0.95},
+                        {"id": 2, "url": "https://theverge.com/...", "title": "Apple M3 Review", "relevance_score": 0.87},
+                    ],
+                    "sources": [
+                        {
+                            "url": "https://apple.com/newsroom/...",
+                            "title": "Apple Unveils M3",
+                            "content": "Apple today announced M3...",
+                            "fetch_tier": "crawl4ai",
+                            "content_length": 4200,
+                            "rerank_score": 0.95,
+                            "fetch_time_ms": 1240.5,
+                        }
                     ],
                     "sources_fetched": 5,
                     "sources_failed": 0,

@@ -2,6 +2,67 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.8.0] — 2026-05-09
+
+### Added
+
+**Stage 3a — Output Quality**
+
+- **Better synthesis prompt** (`app/services/synthesis_service.py`)
+  - Rewrote `_SYSTEM_PROMPT` and `_build_user_content()` for Perplexity-grade citation density, contradiction handling, and length scaling by query complexity.
+  - Added `SYNTHESIS_MAX_TOKENS` config var (default `2048`) for response-length control.
+- **Source metadata enrichment** (`app/schemas.py`, `app/services/models.py`, `app/services/fetch_chain.py`, `app/services/retrieve_service.py`)
+  - `SourceChunk` now carries `fetch_tier`, `content_length`, `rerank_score`, `fetch_time_ms`.
+  - `Citation` now carries `relevance_score` (already computed; previously discarded).
+  - `FetchResult` carries `fetch_time_ms` and `fetch_tier` for end-to-end visibility.
+- **Content quality gates** (`app/services/retrieve_service.py`, `app/config.py`)
+  - Sources under `RETRIEVE_MIN_CONTENT_LENGTH=300` chars (after cleaning) are skipped before synthesis.
+  - Paywall/login-wall heuristics (`_is_likely_paywall`) drop sources marked with "subscribe", "sign in", "premium content", etc.
+  - Better inputs = better answers. Zero latency cost; filtering happens in-memory before LLM call.
+
+**Stage 3b — Streaming for /v1/retrieve**
+
+- **SSE streaming** (`app/routers/retrieve.py`, `app/services/synthesis_service.py`)
+  - `POST /v1/retrieve?stream=true` returns `text/event-stream` with four event types: `meta`, `source`, `token`, `done`.
+  - Search/rerank/fetch phases remain non-streaming (parallel, fast). Only the LLM synthesis phase streams tokens.
+  - `synthesize_stream()` async generator in `synthesis_service.py` pipes LiteLLM `stream=true` tokens directly into SSE `event: token` lines.
+  - Zero latency increase; perceived latency drops from 8–15s of dead silence to progressively rendered text.
+
+**Stage 3c — Caching & Resilience**
+
+- **SQLite caching layer** (`app/services/cache.py`, `app/config.py`, `app/dependencies.py`, `app/services/litellm_search.py`, `app/services/fetch_chain.py`)
+  - `CacheService` in new `app/services/cache.py` — persistent, TTL-on-read, opt-in (`CACHE_ENABLED=false` default).
+  - Search results keyed by hash of normalized query + max_results → TTL `CACHE_SEARCH_TTL=300` s (5 min).
+  - Fetch results keyed by hash of normalized URL → TTL `CACHE_FETCH_TTL=86400` s (24 h).
+  - Transparent integration: `litellm_search.py` reads cache before upstream, writes on success; `fetch_chain.py` reads before tier execution, writes on success.
+  - `CACHE_DB_PATH=/data/cache.db` persists across container restarts via `./data:/data` volume.
+  - `tests/test_cache.py` — 10 cache tests covering hit, miss, expiry, invalidation, concurrent access, disabled mode, clear, stats.
+- **Crawl4AI transient retry** (`app/services/fetch_chain.py`)
+  - On timeout or 5xx from Crawl4AI, retry once after a 1s delay before falling through to Jina Reader.
+  - Prevents degrading JS-heavy pages (Jina cannot render JS) due to a single transient failure.
+  - Only applies to Crawl4AI; no retry at other tiers.
+
+### Config additions
+
+- `SYNTHESIS_MAX_TOKENS=2048` — max tokens for LLM synthesis answer.
+- `RETRIEVE_MIN_CONTENT_LENGTH=300` — min chars for a source to be considered for synthesis.
+- `CACHE_ENABLED=false` — opt-in; set `true` to enable search + fetch caching.
+- `CACHE_SEARCH_TTL=300` — search result cache TTL in seconds.
+- `CACHE_FETCH_TTL=86400` — fetch result cache TTL in seconds.
+- `CACHE_DB_PATH=/data/cache.db` — SQLite path for cache persistence.
+
+### Tests
+
+- 99 tests passing (99 total). New: `tests/test_cache.py` (10 tests), `tests/test_retrieve.py` extended for streaming/quality gates/metadata.
+
+### Architecture
+
+- Cache follows the same SQLite-in-container pattern as observability (`app/observability.py`). No external services.
+- TTL checked lazily on read — no background purging, no cron, no complexity.
+- Cache is per-process (single container). No cross-instance invalidation needed.
+
+---
+
 ## [0.7.0] — 2026-05-09
 
 ### Added

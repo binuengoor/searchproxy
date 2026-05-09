@@ -8,6 +8,7 @@ Self-hosted web search gateway. Thin relay to a LiteLLM router for search, multi
 
 | Tool | Endpoint | Purpose |
 |------|----------|---------|
+| **retrieve** | `POST /v1/retrieve` | One-shot research: search → BGE rerank → parallel fetch → LLM synthesis with [N] inline citations. Streaming with `?stream=true`. |
 | **search_perplexity** | `POST /compat/perplexity` | Quick web search. Perplexity-compatible relay through LiteLLM. Accepts `{"query": "..."}` or full Open WebUI `messages` array (auto-extracts query) |
 | **research_vane** | `POST /vane` | Deep research. Proxy to Vane with streaming support (`?stream=true`). `optimization_mode`: `speed`/`balanced`/`quality`. Accepts `messages` array (auto-extracts query) |
 | **fetch_url** | `POST /fetch` | Fetch any URL as markdown. Crawl4AI → Jina Reader → anti-bot firebreak |
@@ -38,14 +39,87 @@ docker compose up -d --build
 # 3. Test
 curl http://localhost:8080/health
 
+# Quick search
 curl -X POST http://localhost:8080/compat/perplexity \
   -H "Content-Type: application/json" \
   -d '{"query": "python asyncio best practices"}'
 
+# One-shot research with synthesis (v0.8.0)
+curl -X POST http://localhost:8080/v1/retrieve \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What are the downsides of Rust async?", "max_results": 10}'
+
+# Same, but stream tokens as they are synthesized
+curl -N -X POST "http://localhost:8080/v1/retrieve?stream=true" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What are the downsides of Rust async?", "max_results": 10}'
+
+# Fetch a specific URL
 curl -X POST http://localhost:8080/fetch \
   -H "Content-Type: application/json" \
   -d '{"url": "https://news.ycombinator.com"}'
 ```
+
+## Retrieve (`POST /v1/retrieve`)
+
+The **one-shot research endpoint** (v0.8.0) composes the entire pipeline:
+
+```
+User query
+  → LiteLLM search → raw results
+  → Deduplicate by URL hash
+  → BGE reranker (cf-inference) — scores and reorders by relevance
+  → Parallel fetch top N URLs — Crawl4AI → Jina → anti-bot (with caching + retry)
+  → Content quality gates — skip <300 chars or detected paywalls
+  → LLM synthesis — structured, citation-dense answer with inline [1], [2], ...
+  → Return answer + source metadata (tier, length, score, timing)
+```
+
+Request:
+
+```json
+{
+  "query": "What are the downsides of Rust async?",
+  "max_results": 10,
+  "top_k": 8,
+  "stream": false
+}
+```
+
+Response (non-streaming):
+
+```json
+{
+  "answer": "...",
+  "citations": [
+    {
+      "citation_id": 1,
+      "url": "https://...",
+      "title": "...",
+      "relevance_score": 0.91
+    }
+  ],
+  "sources_fetched": 8,
+  "sources_failed": 1,
+  "source_chunks": [
+    {
+      "url": "https://...",
+      "title": "...",
+      "content": "...",
+      "fetch_tier": "crawl4ai",
+      "content_length": 4200,
+      "rerank_score": 0.91,
+      "fetch_time_ms": 820.5
+    }
+  ]
+}
+```
+
+Streaming (`stream=true`) returns `text/event-stream`:
+- `event: meta` — query, counts
+- `event: source` — one per fetched source (before synthesis)
+- `event: token` — LLM tokens as they arrive
+- `event: done` — final metadata
 
 ## Fetch Chain
 
@@ -54,6 +128,7 @@ User → /fetch
   1. Crawl4AI (self-hosted) — fast, primary
      ├── Success → return markdown
      └── Failure
+         ├── Is 5xx/timeout? — Transient retry once after 1s
          ├── Anti-bot pattern detected? → skip Jina, go to firebreak
          └── Other error → try Jina Reader
              ├── Success → return markdown
@@ -69,25 +144,76 @@ Anti-bot credits are never spent on routine failures. Only confirmed Cloudflare 
 
 All via environment variables (see `.env.example`):
 
+**Required:**
+
+| Variable | Note |
+|----------|------|
+| `LITELLM_SEARCH_URL` | Full router URL, e.g. `http://host:4000/search/unifiedsearch` |
+| `LITELLM_CHAT_URL` | LiteLLM chat completions for /v1/retrieve synthesis |
+| `LITELLM_CHAT_MODEL` | Model alias for synthesis, e.g. `openai/gpt-4o-mini` |
+
+**Fetch tiers:**
+
 | Variable | Required | Note |
 |----------|----------|------|
-| `LITELLM_SEARCH_URL` | Yes | Full router URL, e.g. `http://host:4000/search/unifiedsearch` |
 | `CRAWL4AI_URL` | No | Primary fetch tier |
 | `JINA_API_KEY` | No | 500 RPM with key, 20 RPM without |
 | `SCRAPE_DO_API_KEY` | No | Only for anti-bot firebreak |
 | `SCRAPERAPI_API_KEY` | No | Only for anti-bot firebreak |
+
+**Compat / Proxy:**
+
+| Variable | Required | Note |
+|----------|----------|------|
 | `SEARXNG_URL` | No | Enables image/video passthrough in SearXNG compat mode |
 | `VANE_URL` | No | Needed only for `/vane` research endpoint |
-| `SEARCHPROXY_REQUIRE_AUTH` | No | Default `false` |
-| `SEARCHPROXY_API_KEY` | No | Required when auth is enabled |
-| `LOG_LEVEL` | No | `DEBUG`, `INFO` (default), `WARNING`, `ERROR` |
-| `OBSERVABILITY_ENABLED` | No | Enable SQLite request logging. Default `false` |
-| `OBSERVABILITY_DB_PATH` | No | SQLite path. Default `/data/observability.db` |
-| `OBSERVABILITY_RETENTION_DAYS` | No | Auto-purge records older than N days. Default `7` |
-| `LOG_FORMAT` | No | `text` (default) or `json` for structured logging |
-| `CRAWL4AI_TIMEOUT` | No | Per-tier fetch timeout. Default `15` |
-| `JINA_TIMEOUT` | No | Per-tier fetch timeout. Default `15` |
-| `ANTIBOT_TIMEOUT` | No | Per-tier fetch timeout. Default `45` |
+
+**Auth & Observability:**
+
+| Variable | Default | Note |
+|----------|---------|------|
+| `SEARCHPROXY_REQUIRE_AUTH` | `false` | Set `true` to require API key |
+| `SEARCHPROXY_API_KEY` | — | Required when auth is enabled |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `LOG_FORMAT` | `text` | `json` for structured logging |
+| `OBSERVABILITY_ENABLED` | `false` | SQLite request logging |
+| `OBSERVABILITY_DB_PATH` | `/data/observability.db` | SQLite path |
+| `OBSERVABILITY_RETENTION_DAYS` | `7` | Auto-purge old records |
+
+**Timeouts:**
+
+| Variable | Default | Note |
+|----------|---------|------|
+| `CRAWL4AI_TIMEOUT` | `15` | Seconds |
+| `JINA_TIMEOUT` | `15` | Seconds |
+| `ANTIBOT_TIMEOUT` | `45` | Seconds |
+
+**Retrieve tuning (v0.7.0+):**
+
+| Variable | Default | Note |
+|----------|---------|------|
+| `RETRIEVE_MAX_RESULTS` | `10` | Search results before reranking |
+| `RETRIEVE_TOP_K` | `8` | URLs to fetch after reranking |
+| `RETRIEVE_MAX_CONTENT_LENGTH` | `3000` | Max chars per fetched source |
+| `SYNTHESIS_MAX_TOKENS` | `2048` | Max tokens for LLM synthesis (v0.8.0) |
+| `RETRIEVE_MIN_CONTENT_LENGTH` | `300` | Min chars to include a source (v0.8.0) |
+
+**Caching (v0.8.0, opt-in):**
+
+| Variable | Default | Note |
+|----------|---------|------|
+| `CACHE_ENABLED` | `false` | Set `true` to enable |
+| `CACHE_SEARCH_TTL` | `300` | Search result cache TTL in seconds (5 min) |
+| `CACHE_FETCH_TTL` | `86400` | Fetch result cache TTL in seconds (24 h) |
+| `CACHE_DB_PATH` | `/data/cache.db` | SQLite path; mount `./data:/data` |
+
+**Reranker (v0.7.0):**
+
+| Variable | Default | Note |
+|----------|---------|------|
+| `CF_RERANK_URL` | — | Cloudflare Workers AI rerank endpoint |
+| `CF_RERANK_MODEL` | `bge-reranker-base` | Rerank model name |
+| `CF_RERANK_API_KEY` | — | API key for cf-inference |
 
 ## Observability
 

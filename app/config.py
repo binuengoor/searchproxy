@@ -60,6 +60,19 @@ class Settings(BaseSettings):
         default=20,
         description="Number of search results to send to the reranker.",
     )
+    SYNTHESIS_MAX_TOKENS: int = Field(
+        default=2048,
+        description="Max tokens for the LLM synthesis response.",
+    )
+    RETRIEVE_MIN_CONTENT_LENGTH: int = Field(
+        default=300,
+        description="Minimum characters of fetched content for a source to be included in synthesis.",
+    )
+    # --- Caching ---
+    CACHE_ENABLED: bool = Field(default=False, description="Enable SQLite caching for search and fetch results.")
+    CACHE_SEARCH_TTL: int = Field(default=300, description="TTL for search cache entries in seconds.")
+    CACHE_FETCH_TTL: int = Field(default=86400, description="TTL for fetch cache entries in seconds.")
+    CACHE_DB_PATH: str = Field(default="/data/cache.db", description="Path to SQLite cache database.")
 
     # --- Vane deep research ---
     VANE_URL: str = Field(default="http://vane-host:3001")

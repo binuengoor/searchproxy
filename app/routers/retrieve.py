@@ -6,6 +6,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
+from fastapi.responses import StreamingResponse
 
 from app.dependencies import get_retrieve_service
 from app.schemas import RetrieveRequest, RetrieveResponse
@@ -38,6 +39,9 @@ sources with inline [N] citations.
 
 **Pipeline:** LiteLLM search → BGE rerank → Crawl4AI/Jina/anti-bot fetch → 
 LLM synthesis with citation prompt.
+
+**Streaming:** Set `stream: true` to receive the LLM synthesis as SSE tokens.
+Search/rerank/fetch phases are still synchronous; only synthesis streams.
 """
 
 @router.post(
@@ -51,20 +55,33 @@ LLM synthesis with citation prompt.
 async def retrieve(
     body: RetrieveRequest,
     service: Annotated[RetrieveService, Depends(get_retrieve_service)],
-) -> RetrieveResponse:
+) -> RetrieveResponse | StreamingResponse:
     """One-shot research endpoint. Searches the web, reranks results,
     fetches top sources, and synthesizes a cited answer.
 
     Returns a structured response with inline [N] citations and source URLs.
     Set ``synthesize`` to false to skip LLM synthesis and get raw source chunks.
+    Set ``stream`` to true to receive the LLM synthesis as SSE tokens.
     """
     log.info(
-        "/v1/retrieve query='%s' max_results=%d fetch_top_k=%d synthesize=%s",
+        "/v1/retrieve query='%s' max_results=%d fetch_top_k=%d synthesize=%s stream=%s",
         body.query,
         body.max_results,
         body.fetch_top_k,
         body.synthesize,
+        body.stream,
     )
+
+    if body.stream and body.synthesize:
+        return StreamingResponse(
+            service.retrieve_stream(
+                query=body.query,
+                max_results=body.max_results,
+                fetch_top_k=body.fetch_top_k,
+            ),
+            media_type="text/event-stream",
+        )
+
     return await service.retrieve(
         query=body.query,
         max_results=body.max_results,

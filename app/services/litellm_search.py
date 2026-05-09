@@ -63,9 +63,15 @@ class LiteLLMSearchClient:
     Does not reach into other services. Owns its own request logic.
     """
 
-    def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        settings: Settings,
+        cache: "CacheService | None" = None,
+    ) -> None:
         self._client = client
         self._settings = settings
+        self._cache = cache
         self._timeout = httpx.Timeout(
             timeout=float(settings.SEARCH_TIMEOUT),
             connect=5.0,
@@ -83,6 +89,18 @@ class LiteLLMSearchClient:
         response and never need to handle exceptions.
         """
         log.info("Searching LiteLLM for '%s'", query)
+
+        # --- Cache read ---
+        if self._cache is not None:
+            cached = await self._cache.get_search(query, max_results)
+            if cached is not None:
+                log.info("Cache HIT for search: '%s'", query)
+                try:
+                    return SearchResponse.model_validate(cached)
+                except Exception as exc:
+                    log.warning("Cache deserialization failed for '%s': %s", query, exc)
+            else:
+                log.info("Cache MISS for search: '%s'", query)
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._settings.LITELLM_API_KEY:
@@ -136,9 +154,16 @@ class LiteLLMSearchClient:
             if isinstance(r, dict)
         ]
 
+        search_resp = SearchResponse(results=results)
+
         log.info(
             "LiteLLM returned %d results for '%s'",
             len(results),
             query,
         )
-        return SearchResponse(results=results)
+
+        # --- Cache write ---
+        if self._cache is not None and results:
+            await self._cache.set_search(query, max_results, search_resp.model_dump())
+
+        return search_resp

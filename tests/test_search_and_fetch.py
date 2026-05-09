@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient
@@ -24,7 +25,7 @@ def mock_litellm_search(monkeypatch):
 
 
 @pytest.fixture
-def fetch_chain():
+def fetch_chain(monkeypatch):
     """Return a FetchChain with all internal services mocked out.
 
     Note: this fixture is NOT autoused — tests must explicitly request it.
@@ -40,6 +41,9 @@ def fetch_chain():
     chain._jina = AsyncMock()
     chain._scrape_do = AsyncMock()
     chain._scraper_api = AsyncMock()
+
+    # Prevent real sleeps in tests
+    monkeypatch.setattr("app.services.fetch_chain.asyncio.sleep", AsyncMock())
 
     return chain
 
@@ -274,3 +278,65 @@ async def test_fetch_chain_body_scan_anti_bot_on_200(fetch_chain):
     assert result.success is True
     assert result.source == "scrape_do"
     assert result.markdown == "Real content"
+
+
+# ---------------------------------------------------------------------------
+# Crawl4AI transient retry
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_fetch_chain_transient_retry_succeeds(fetch_chain):
+    """Crawl4AI times out once, retry succeeds, chain returns clean result."""
+    chain = fetch_chain
+    chain._crawl4ai.fetch_markdown.side_effect = [
+        FetchResult(success=False, url="https://example.com", error="timeout", source="crawl4ai"),
+        FetchResult(success=True, url="https://example.com", markdown="# OK", title="OK", source="crawl4ai"),
+    ]
+
+    result = await chain.execute("https://example.com")
+
+    assert result.success is True
+    assert result.source == "crawl4ai"
+    assert result.markdown == "# OK"
+    assert chain._crawl4ai.fetch_markdown.await_count == 2
+    chain._jina.fetch.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_fetch_chain_transient_retry_then_fallback(fetch_chain):
+    """Crawl4AI times out twice (transient), then Jina succeeds."""
+    chain = fetch_chain
+    chain._crawl4ai.fetch_markdown.side_effect = [
+        FetchResult(success=False, url="https://example.com", error="timeout", source="crawl4ai"),
+        FetchResult(success=False, url="https://example.com", error="timeout", source="crawl4ai"),
+    ]
+    chain._jina.fetch.return_value = FetchResult(
+        success=True, url="https://example.com", markdown="Jina OK", source="jina"
+    )
+
+    result = await chain.execute("https://example.com")
+
+    assert result.success is True
+    assert result.source == "jina"
+    assert chain._crawl4ai.fetch_markdown.await_count == 2
+    chain._jina.fetch.assert_awaited_once_with("https://example.com")
+
+
+@pytest.mark.anyio
+async def test_fetch_chain_500_transient_then_anti_bot(fetch_chain):
+    """Crawl4AI returns 500 (transient), retry returns 403 (anti-bot) → escalate to firebreak."""
+    chain = fetch_chain
+    chain._crawl4ai.fetch_markdown.side_effect = [
+        FetchResult(success=False, url="https://example.com", error="server error", status_code=500, source="crawl4ai"),
+        FetchResult(success=False, url="https://example.com", error="blocked", status_code=403, source="crawl4ai"),
+    ]
+    chain._scrape_do.fetch.return_value = FetchResult(
+        success=True, url="https://example.com", markdown="Firebreak OK", source="scrape_do"
+    )
+
+    result = await chain.execute("https://example.com")
+
+    assert result.success is True
+    assert result.source == "scrape_do"
+    assert chain._crawl4ai.fetch_markdown.await_count == 2
+    chain._jina.fetch.assert_not_awaited()

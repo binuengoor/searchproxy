@@ -23,6 +23,7 @@ class FetchResult(BaseModel):
     error: str = Field(default="", description="Human-readable error message when success=false.")
     status_code: int | None = Field(default=None, description="HTTP status code from the successful tier, if any.")
     source: str = Field(default="", description="Which tier produced the result: crawl4ai, jina, scrape_do, scraperapi, or empty.")
+    fetch_time_ms: float | None = Field(default=None, description="Time spent fetching this URL in milliseconds (entire tier chain).")
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -37,6 +38,7 @@ class FetchResult(BaseModel):
                     "error": "",
                     "status_code": 200,
                     "source": "crawl4ai",
+                    "fetch_time_ms": 1240.5,
                 },
                 {
                     "success": False,
@@ -48,6 +50,7 @@ class FetchResult(BaseModel):
                     "error": "All fetch tiers exhausted; page appears blocked.",
                     "status_code": None,
                     "source": "",
+                    "fetch_time_ms": 45200.0,
                 },
             ]
         }

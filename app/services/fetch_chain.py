@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 
 import httpx
 from pydantic import BaseModel, Field
@@ -48,8 +50,14 @@ class FetchChain:
     They are NEVER invoked for routine 5xx or timeout failures.
     """
 
-    def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        settings: Settings,
+        cache: "CacheService | None" = None,
+    ) -> None:
         self._settings = settings
+        self._cache = cache
         self._crawl4ai = Crawl4AIClient(client=client, settings=settings)
         self._jina = JinaReaderClient(client=client, settings=settings)
         self._scrape_do = ScrapeDoClient(client=client, settings=settings)
@@ -63,17 +71,28 @@ class FetchChain:
             return True
         return False
 
+    def _is_transient(self, result: FetchResult) -> bool:
+        """Return True if the result looks like a transient failure worth retrying."""
+        if result.error == "timeout":
+            return True
+        if result.status_code is not None and result.status_code >= 500:
+            return True
+        return False
+
     async def execute(self, url: str) -> FetchResult:
         """Execute the tiered fetch chain for the given URL.
 
         Flow:
-        1. Crawl4AI.fetch_markdown — primary
+        1. Crawl4AI.fetch_markdown — primary (with 1 retry on transient failure)
            ├── Success → return (cleaned)
-           └── Failure
-               ├── Is anti-bot block? → skip Jina, go to firebreak
-               └── Other error → Jina Reader
-                   ├── Success → return (cleaned)
-                   └── Failure / is anti-bot? → firebreak
+           └── Failure (transient)
+               ├── Retry once after 1s delay
+               ├── Success → return (cleaned)
+               └── Still failure
+                   ├── Is anti-bot block? → skip Jina, go to firebreak
+                   └── Other error → Jina Reader
+                       ├── Success → return (cleaned)
+                       └── Failure / is anti-bot? → firebreak
 
         Anti-Bot Firebreak:
         1. Scrape.do (if key set)
@@ -91,32 +110,59 @@ class FetchChain:
 
         Returns:
             FetchResult from the first successful tier, or a failure result
-            if all tiers are exhausted.
+            if all tiers are exhausted. Includes fetch_time_ms for observability.
         """
-        # ── Tier 1: Crawl4AI ────────────────────────────────────────────────
+        start_time = time.perf_counter()
+
+        # ── Cache read ────────────────────────────────────────────────────
+        if self._cache is not None:
+            cached = await self._cache.get_fetch(url)
+            if cached is not None:
+                log.info("Cache HIT for fetch: %s", url)
+                try:
+                    return FetchResult.model_validate(cached)
+                except Exception as exc:
+                    log.warning("Cache deserialization failed for %s: %s", url, exc)
+            else:
+                log.info("Cache MISS for fetch: %s", url)
+
+        # ── Tier 1: Crawl4AI (with 1 transient retry) ────────────────────
         result = await self._crawl4ai.fetch_markdown(url)
+
+        if not result.success and self._is_transient(result):
+            log.warning(
+                "Crawl4AI transient failure for %s (status=%s, error=%s); retrying once after 1s",
+                url,
+                result.status_code,
+                result.error,
+            )
+            await self._sleep(1.0)
+            result = await self._crawl4ai.fetch_markdown(url)
+
         if result.success:
-            # Even on success, check if the body contains anti-bot content
             if _is_anti_bot_block(result.status_code, result.markdown):
                 log.warning(
                     "Crawl4AI returned %s but anti-bot content detected for %s, escalating to firebreak",
                     result.status_code,
                     url,
                 )
-                return await self._firebreak(url)
+                result.fetch_time_ms = self._elapsed_ms(start_time)
+                return await self._firebreak_and_cache(url, start_time)
             log.info("Crawl4AI succeeded for %s", url)
             get_collector().inc_tier("crawl4ai", "success")
             result.markdown = clean_content(result.markdown, url=url)
+            result.fetch_time_ms = self._elapsed_ms(start_time)
+            await self._store_fetch(url, result)
             return result
 
-        # Crawl4AI failed — determine if it's an anti-bot block
-        is_antibot = self._is_anti_bot(result)
-        if is_antibot:
+        # Crawl4AI failed permanently — determine if it's an anti-bot block
+        if self._is_anti_bot(result):
             log.warning(
                 "Crawl4AI failed with %s — anti-bot detected, skipping Jina, escalating to firebreak",
                 result.status_code,
             )
-            return await self._firebreak(url)
+            result.fetch_time_ms = self._elapsed_ms(start_time)
+            return await self._firebreak_and_cache(url, start_time)
 
         # Non-anti-bot failure — try Jina Reader
         log.info("Crawl4AI failed for %s (not anti-bot), trying Jina", url)
@@ -129,10 +175,13 @@ class FetchChain:
                     jina_result.status_code,
                     url,
                 )
-                return await self._firebreak(url)
+                jina_result.fetch_time_ms = self._elapsed_ms(start_time)
+                return await self._firebreak_and_cache(url, start_time)
             log.info("Jina Reader succeeded for %s", url)
             get_collector().inc_tier("jina", "success")
             jina_result.markdown = clean_content(jina_result.markdown, url=url)
+            jina_result.fetch_time_ms = self._elapsed_ms(start_time)
+            await self._store_fetch(url, jina_result)
             return jina_result
 
         # Jina failed — only firebreak for confirmed anti-bot blocks
@@ -141,7 +190,8 @@ class FetchChain:
                 "Jina Reader failed with %s — anti-bot detected, escalating to firebreak",
                 jina_result.status_code,
             )
-            return await self._firebreak(url)
+            jina_result.fetch_time_ms = self._elapsed_ms(start_time)
+            return await self._firebreak_and_cache(url, start_time)
 
         # Not anti-bot — all public tiers exhausted, return failure directly
         log.info(
@@ -149,13 +199,31 @@ class FetchChain:
             url,
         )
         get_collector().inc_tier("jina", "fail")
+        jina_result.fetch_time_ms = self._elapsed_ms(start_time)
+        await self._store_fetch(url, jina_result)
         return jina_result
 
-    async def _firebreak(self, url: str) -> FetchResult:
+    @staticmethod
+    async def _sleep(seconds: float) -> None:
+        """Async sleep for transient retry delay."""
+        await asyncio.sleep(seconds)
+
+    async def _store_fetch(self, url: str, result: FetchResult) -> None:
+        """Store a fetch result in the cache if caching is enabled."""
+        if self._cache is not None:
+            await self._cache.set_fetch(url, result.model_dump())
+
+    async def _firebreak_and_cache(self, url: str, start_time: float) -> FetchResult:
+        """Run firebreak then store the result in cache."""
+        result = await self._firebreak(url, start_time)
+        await self._store_fetch(url, result)
+        return result
+
+    async def _firebreak(self, url: str, start_time: float) -> FetchResult:
         """Execute the anti-bot firebreak: Scrape.do → ScraperAPI.
 
         Only called for confirmed anti-bot blocks. Never called for routine
-        5xx or timeout failures.
+        5xx or timeout failures. Inherits start_time for end-to-end timing.
         """
         # ── Tier 2a: Scrape.do ─────────────────────────────────────────────
         if self._settings.SCRAPE_DO_API_KEY:
@@ -164,6 +232,7 @@ class FetchChain:
                 scrape_do_result.markdown = clean_content(scrape_do_result.markdown, url=url)
                 log.info("Scrape.do succeeded for %s after cleaning", url)
                 get_collector().inc_tier("scrape_do", "success")
+                scrape_do_result.fetch_time_ms = self._elapsed_ms(start_time)
                 return scrape_do_result
             get_collector().inc_tier("scrape_do", "fail")
             log.warning("Scrape.do failed for %s, trying ScraperAPI", url)
@@ -177,6 +246,7 @@ class FetchChain:
                 scraper_api_result.markdown = clean_content(scraper_api_result.markdown, url=url)
                 log.info("ScraperAPI succeeded for %s after cleaning", url)
                 get_collector().inc_tier("scraperapi", "success")
+                scraper_api_result.fetch_time_ms = self._elapsed_ms(start_time)
                 return scraper_api_result
             get_collector().inc_tier("scraperapi", "fail")
             log.warning("ScraperAPI failed for %s", url)
@@ -190,4 +260,10 @@ class FetchChain:
             url=url,
             error="all tiers exhausted",
             source="",
+            fetch_time_ms=self._elapsed_ms(start_time),
         )
+
+    @staticmethod
+    def _elapsed_ms(start_time: float) -> float:
+        """Return milliseconds elapsed since start_time."""
+        return round((time.perf_counter() - start_time) * 1000, 2)

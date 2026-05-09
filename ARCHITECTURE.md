@@ -25,7 +25,7 @@ Python 3.11+
 FastAPI
 httpx (async HTTP client)
 Pydantic (validation)
-SQLite (observability persistence)
+SQLite (observability + caching persistence)
 ```
 
 ## Endpoints
@@ -36,6 +36,7 @@ These are the tools that MCPHub/Open WebUI expose to LLM models. Call one of the
 
 | Tool | Endpoint | Method | When to use |
 |------|----------|--------|-------------|
+| **retrieve** | `POST /v1/retrieve` | POST | One-shot research: search → BGE rerank → parallel fetch → LLM synthesis with inline [N] citations. Streaming with `?stream=true`. Use when the user wants a synthesized answer, not just search metadata. |
 | **search_perplexity** | `POST /compat/perplexity` | POST | Quick web search for facts, current events, definitions, and simple lookups. Accepts `{"query": "..."}` or a full Open WebUI `messages` array (query auto-extracted from the last user message). |
 | **research_vane** | `POST /vane` | POST | Deep research requiring synthesis across multiple sources. Slower than simple search but produces a comprehensive report with inline citations. Set `optimization_mode` to `speed`/`balanced`/`quality`. |
 | **fetch_url** | `POST /fetch` | POST | Fetch content from a specific URL the user provided. Runs Crawl4AI → Jina Reader → anti-bot firebreak. Returns markdown with metadata. |
@@ -102,6 +103,24 @@ SCRAPERAPI_API_KEY=
 # All inside the same container; no external services.
 OBSERVABILITY_ENABLED=true
 OBSERVABILITY_DB_PATH=/data/observability.db
+# --- Retrieve synthesis ---
+LITELLM_CHAT_URL=http://litellm-host:4000/v1
+LITELLM_CHAT_MODEL=openai/gpt-4o-mini
+SYNTHESIS_MAX_TOKENS=2048
+RETRIEVE_MIN_CONTENT_LENGTH=300
+
+# --- Cache (opt-in) ---
+CACHE_ENABLED=false
+CACHE_SEARCH_TTL=300
+CACHE_FETCH_TTL=86400
+CACHE_DB_PATH=/data/cache.db
+
+# --- Reranker ---
+CF_RERANK_URL=http://localhost:8787/v1/rerank
+CF_RERANK_MODEL=bge-reranker-base
+CF_RERANK_API_KEY=
+
+# --- Observability ---
 OBSERVABILITY_RETENTION_DAYS=7
 ```
 
@@ -117,6 +136,7 @@ All keys are optional. If missing, the associated fetch tier is simply skipped.
 |----------|------------------------|-------|--------|
 | `/compat/perplexity` | Perplexity API | `{"query": "...", "max_results": 10}` | `{"results": [...]}` with title, url, snippet |
 | `/compat/searxng` | SearXNG JSON API (`?format=json`) | Query params: `q`, `categories`, `engines`, etc. | Standard SearXNG JSON with `results`, `answers`, `suggestions`, `infoboxes` |
+| `/v1/retrieve` | Perplexity, OpenAI search | `{"query": "...", "max_results": 10, "stream": false}` | Synthesized answer with inline [N] citations, source metadata, and optional streaming |
 | `/vane` | Vane, Perplexity, Jina DeepSearch | `{"query": "...", "optimization_mode": "balanced"}` | Synthesized report with inline citations. Streams when `?stream=true` |
 | `/fetch` | `r.jina.ai`, Firecrawl | `{"url": "https://..."}` or `?url=...` | Markdown/text + metadata |
 
@@ -148,7 +168,11 @@ User requests POST /fetch {"url": "https://..."}
        │   → Skip Jina (it can't bypass anti-bot)
        │   → Go directly to Anti-Bot Firebreak
        │
-       └── Other error (5xx, timeout, DNS)
+       ├── Is 5xx or timeout?
+       │   → Retry Crawl4AI once after 1s delay (Crawl4AI may succeed on retry before Jina)
+       │   └── Still failing → Go to Jina Reader
+       │
+       └── Other error (DNS, 4xx, non-anti-bot)
            → Go to Jina Reader
            │   ├── Success
            │   │   ├── Content Cleaner
@@ -373,6 +397,10 @@ These rules keep the codebase readable and safe to refactor six months from now.
 | Decision | Rationale |
 |----------|-----------|
 | No custom provider rotation | LiteLLM router handles this. We deleted 1,250 lines from the old codebase. |
+| Cache follows SQLite-in-container pattern (not Redis) | Same approach as observability: zero external services, zero setup, persists via Docker volume. Graduate to Redis only if multi-instance. |
+| Crawl4AI transient retry before Jina fallback | Jina cannot render JS. Retrying Crawl4AI once on 5xx/timeout avoids degrading SPA pages that Crawl4AI can handle on retry. |
+| Quality gates before synthesis | Sources under 300 chars or detected paywall are skipped before synthesis. Better inputs = better answers. Filter is cheap (in-memory string checks). |
+| SSE streaming for synthesis only | Search/rerank/fetch are parallel phases — cannot stream. Only LLM synthesis tokens can be streamed. `synthesize_stream()` returns an async generator consumed by `StreamingResponse`. |
 | No `max_results` enforcement at proxy | LiteLLM passes it through, individual providers may ignore it. Client-side slicing if strict limits needed. |
 | Scrape.do before ScraperAPI | 98% success vs 61%. Higher credit efficiency. |
 | Jina Reader included even though `r.jina.ai` is free | With API key, rate limits go from 20 RPM → 500 RPM. Future-proofing for Jina Reranker etc. |

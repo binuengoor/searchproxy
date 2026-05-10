@@ -71,10 +71,31 @@ def _canonical_key(url: str) -> str:
 
 
 def _truncate_content(content: str, max_chars: int) -> str:
-    """Truncate content to max_chars, keeping the beginning."""
+    """Truncate content to max_chars, rounding down to the nearest paragraph boundary.
+
+    Prevents mid-sentence or mid-table cuts by finding the last
+    double-newline before max_chars. Falls back to last sentence
+    boundary (period/newline) if no paragraph break is found.
+    """
     if len(content) <= max_chars:
         return content
-    return content[:max_chars]
+
+    # Try to cut at the last paragraph boundary (\n\n) before max_chars
+    search_range = content[:max_chars]
+    last_para = search_range.rfind("\n\n")
+    if last_para > max_chars * 0.5:
+        return content[:last_para].strip()
+
+    # No good paragraph boundary — try sentence boundary
+    last_sentence = max(
+        search_range.rfind(".\n"),
+        search_range.rfind(". "),
+    )
+    if last_sentence > max_chars * 0.5:
+        return content[:last_sentence + 1].strip()
+
+    # Last resort: hard cut
+    return content[:max_chars].strip()
 
 
 class RetrieveService:
@@ -217,14 +238,26 @@ class RetrieveService:
             sources_skipped_quality,
         )
 
-        # ── Step 6: Enforce max total content ────────────────────────────
+        # ── Step 6: Enforce max total content with relevance-weighted budget ─
         total_content = sum(len(s.content) for s in sources)
         if total_content > self._settings.RETRIEVE_MAX_TOTAL_CONTENT:
             budget = self._settings.RETRIEVE_MAX_TOTAL_CONTENT
-            per_source = budget // len(sources)
+            # Weight by relevance_score: higher relevance gets more budget
+            scores = [s.relevance_score or 0.5 for s in sources]
+            total_weight = sum(scores)
+            per_source_budgets = [
+                max(budget // len(sources) // 2, int(budget * (w / total_weight)))
+                for w in scores
+            ]
+            # Normalize: if total budget exceeds limit, scale down proportionally
+            total_budget = sum(per_source_budgets)
+            if total_budget > budget:
+                scale = budget / total_budget
+                per_source_budgets = [int(b * scale) for b in per_source_budgets]
             for i in range(len(sources)):
-                sources[i].content = _truncate_content(sources[i].content, per_source)
-            log.info("Total content truncated from %d to ~%d chars", total_content, budget)
+                sources[i].content = _truncate_content(sources[i].content, per_source_budgets[i])
+            actual_total = sum(len(s.content) for s in sources)
+            log.info("Total content truncated from %d to %d chars (relevance-weighted budget)", total_content, actual_total)
 
         return sources, sources_fetched, sources_failed, sources_skipped_quality, top_urls
 

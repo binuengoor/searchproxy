@@ -122,3 +122,82 @@ class TestMarkdownPreserved:
         assert "<footer>" not in result
         # Score/match info should still be present
         assert "Arsenal" in result
+
+class TestMarkdownSpamStrip:
+    """Markdown nav/link-spam removal in aggressive mode."""
+
+    def test_strips_link_spam_lines(self) -> None:
+        """Lines that are >70% markdown links are removed."""
+        md = "# Arsenal Fixtures\n\nArsenal vs Chelsea on May 10.\n\n[ Home ](https://example.com/) [ About ](https://example.com/about) [ Contact ](https://example.com/contact) [ Betting Sites ](https://example.com/betting/) [ More Links ](https://example.com/more/)\n\nArsenal vs Liverpool on May 17."
+        result = clean_content(md, aggressive=True)
+        assert "Arsenal vs Chelsea" in result
+        assert "Arsenal vs Liverpool" in result
+        assert "[ About ]" not in result
+        assert "Betting Sites" not in result
+
+    def test_preserves_normal_markdown_links(self) -> None:
+        """Lines with inline links within paragraphs are preserved."""
+        md = "Arsenal signed a new player from [BBC Sport](https://bbc.co.uk). The transfer was confirmed."
+        result = clean_content(md, aggressive=True)
+        assert "Arsenal signed" in result
+        assert "BBC Sport" in result
+
+    def test_strips_bare_url_lines(self) -> None:
+        """Lines that are just a URL are removed."""
+        md = "See details below.\n\nhttps://www.example.com/some/long/path\n\nArsenal won 3-0."
+        result = clean_content(md, aggressive=True)
+        assert "Arsenal won" in result
+        assert "https://www.example.com" not in result
+
+    def test_strips_pipe_delimited_nav(self) -> None:
+        """Pipe-delimited nav lines with multiple links are removed."""
+        md = "# Arsenal\n\nArsenal play Chelsea.\n\n| [Home](/) | [Fixtures](/fixtures) | [Results](/results) | [Tables](/tables) |\n\nMore content here."
+        result = clean_content(md, aggressive=True)
+        assert "Arsenal play Chelsea" in result
+        assert "More content" in result
+
+    def test_collapses_excessive_blank_lines(self) -> None:
+        """More than 2 consecutive blank lines are collapsed to max 2."""
+        md = "Paragraph one.\n\n\n\n\n\nParagraph two."
+        result = clean_content(md, aggressive=True)
+        # Should not have 3+ consecutive newlines (more than 1 blank line)
+        assert "\n\n\n" not in result
+
+    def test_aggressive_mode_strips_spam_from_markdown(self) -> None:
+        """Aggressive mode on markdown input runs spam stripping."""
+        md = "# Arsenal Fixtures\n\n[ Bet365 ](https://bet365.com) [ 1xBet ](https://1xbet.com) [ Betway ](https://betway.com)\n\nWest Ham vs Arsenal - May 10\nArsenal vs Burnley - May 17"
+        result = clean_content(md, aggressive=True)
+        assert "West Ham vs Arsenal" in result
+        # The link-spam line should be removed
+        assert "Bet365" not in result
+
+
+class TestParagraphBoundaryTruncation:
+    """Paragraph-boundary-aware truncation in _truncate_content."""
+
+    def test_no_truncation_when_under_limit(self) -> None:
+        from app.services.retrieve_service import _truncate_content
+        content = "Short content."
+        assert _truncate_content(content, 100) == content
+
+    def test_truncates_at_paragraph_boundary(self) -> None:
+        from app.services.retrieve_service import _truncate_content
+        content = "Para one\n\nPara two\n\nPara three\n\nPara four"
+        result = _truncate_content(content, 25)
+        # Should cut at a paragraph boundary, not mid-word
+        assert result.endswith("Para two")
+        assert "Para three" not in result
+
+    def test_falls_back_to_sentence_boundary(self) -> None:
+        from app.services.retrieve_service import _truncate_content
+        content = "First sentence. Second sentence. Third sentence. Fourth sentence."
+        result = _truncate_content(content, 35)
+        # Should end at a sentence boundary
+        assert result.endswith(".")
+        assert "Fourth" not in result
+
+    def test_hard_cut_when_no_good_boundary(self) -> None:
+        from app.services.retrieve_service import _truncate_content
+        content = "abcdefghijklmnopqrstuvwxyz"
+        result = _truncate_content(content, 10)
+        assert len(result) <= 10

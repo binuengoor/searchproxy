@@ -83,6 +83,60 @@ def _looks_like_html(content: str) -> bool:
     return any(tag in normalised for tag in _HTML_INDICATORS)
 
 
+
+_LINK_LINE_RE = re.compile(r'\[(?:[^\]]*)\]\([^)]+\)')
+_BARE_URL_RE = re.compile(r'https?://\S+')
+_PIPE_NAV_RE = re.compile(r'(?:^|\n)\s*\|[^\n]*\|(?:\s*\|)+[^\n]*(?:\n|$)')
+_REPEAT_DUP_RE = re.compile(r'(\n[^\n]{10,100})\1{2,}')
+
+
+def _strip_markdown_spam(text: str) -> str:
+    """Remove nav/menu/link-spam lines from markdown content.
+
+    Targets patterns common in scraped pages:
+    - Lines that are >70% link syntax by character count
+    - Lines of pipe-delimited link tables (nav menus)
+    - Repeated duplicate blocks (betting odds tables, country lists)
+    - Bare URL lines
+    - Collapse excessive blank lines
+
+    This is fast regex-only — no LLM calls needed.
+    """
+    lines = text.split('\n')
+    kept = []
+    for line in lines:
+        stripped = line.strip()
+
+        # Skip empty lines (we'll re-add paragraph breaks later)
+        if not stripped:
+            kept.append('')
+            continue
+
+        # Skip lines that are >70% markdown link syntax
+        link_chars = sum(len(m.group()) for m in _LINK_LINE_RE.finditer(stripped))
+        if link_chars > len(stripped) * 0.7:
+            continue
+
+        # Skip lines that are just a bare URL
+        if _BARE_URL_RE.fullmatch(stripped):
+            continue
+
+        # Skip pipe-delimited nav lines (| link | link | link |)
+        if stripped.startswith('|') and stripped.count('|') >= 4 and stripped.count('](') >= 2:
+            continue
+
+        kept.append(line)
+
+    result = '\n'.join(kept)
+
+    # Collapse 3+ consecutive blank lines to 2
+    result = re.sub(r'\n{3,}', '\n\n', result)
+
+    # Remove repeated duplicate blocks (e.g. the same nav repeated)
+    result = _REPEAT_DUP_RE.sub(r'\1', result)
+
+    return result.strip()
+
 def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
     """Return agent-friendly markdown text.
 
@@ -108,11 +162,25 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
         return ""
 
     if len(raw) < _CLEANUP_THRESHOLD and not _looks_like_html(raw):
-        return raw.strip()
+        if not aggressive:
+            return raw.strip()
+        # Aggressive mode: still strip link-spam even on short content
+        return _strip_markdown_spam(raw.strip())
 
     if not aggressive and not _looks_like_html(raw):
         # Looks like markdown / plain text — no structural extraction needed.
         return raw.strip()
+
+    # In aggressive mode with markdown input, skip trafilatura (it expects HTML)
+    # but still strip markdown nav/link-spam.
+    if aggressive and not _looks_like_html(raw):
+        cleaned = _strip_markdown_spam(raw.strip())
+        log.info(
+            "Content spam-stripped %s: %d → %d chars (%.1f%% reduction)",
+            url, len(raw), len(cleaned),
+            (1 - len(cleaned) / len(raw)) * 100 if len(raw) > 0 else 0,
+        )
+        return cleaned
 
     try:
         extracted = trafilatura.extract(
@@ -130,7 +198,9 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
         extracted = None
 
     if extracted:
-        raw_len, clean_len = len(raw), len(extracted)
+        # Strip markdown nav/link-spam from extracted content
+        cleaned = _strip_markdown_spam(extracted.strip())
+        raw_len, clean_len = len(raw), len(cleaned)
         log.info(
             "Content cleaned %s: %d → %d chars (%.1f%% reduction)",
             url,
@@ -138,15 +208,16 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
             clean_len,
             (1 - clean_len / raw_len) * 100,
         )
-        return extracted.strip()
+        return cleaned
 
     # Extraction failed - trafilatura could not find article content.
     # Strip HTML tags and collapse whitespace as a best-effort cleanup.
     # The quality gate (min_length) will reject truly useless pages.
     fallback_chars = 8000
     cleaned = _strip_html_fallback(raw[:fallback_chars])
+    cleaned = _strip_markdown_spam(cleaned)
     log.warning(
-        "trafilatura returned empty for %s, falling back to HTML-stripped first %d chars (%d → %d)",
+        "trafilatura returned empty for %s, falling back to HTML+spam-stripped first %d chars (%d → %d)",
         url,
         fallback_chars,
         len(raw[:fallback_chars]),

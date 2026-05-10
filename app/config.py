@@ -49,7 +49,7 @@ class Settings(BaseSettings):
 
     # --- Retrieve: tuning ---
     RETRIEVE_MAX_CONTENT_PER_SOURCE: int = Field(
-        default=4000,
+        default=6000,
         description="Max characters of fetched content per source for synthesis.",
     )
     RETRIEVE_MAX_TOTAL_CONTENT: int = Field(

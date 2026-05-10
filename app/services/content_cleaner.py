@@ -2,7 +2,8 @@
 
 All raw HTML that makes it through the anti-bot firebreak (Scrape.do,
 ScraperAPI) is passed through trafilatura to extract the main article text
-as markdown.  Already-clean markdown from Crawl4AI / Jina is left untouched.
+as markdown. Already-clean markdown from Crawl4AI / Jina is left untouched
+unless *aggressive* mode is enabled.
 """
 
 from __future__ import annotations
@@ -55,16 +56,23 @@ def _looks_like_html(content: str) -> bool:
     return any(tag in normalised for tag in _HTML_INDICATORS)
 
 
-def clean_content(raw: str, url: str = "") -> str:
+def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
     """Return agent-friendly markdown text.
 
     - HTML is extracted via trafilatura → clean markdown.
-    - Markdown/plain text is returned unchanged.
+    - Markdown/plain text is returned unchanged unless *aggressive* is True,
+      in which case trafilatura structural extraction is always run.
     - On extraction failure the original is truncated to 8 000 chars.
 
     Args:
         raw: Body returned by a fetch tier.
         url: Optional URL passed to trafilatura for metadata hints.
+        aggressive: If True, always run trafilatura extraction even when
+            the input looks like clean markdown. Use this for retrieve
+            pipeline where boilerplate nav/sidebars/carts must be stripped.
+            If False (default), only HTML gets structural extraction;
+            markdown is returned as-is. Use this for direct /fetch calls
+            where the caller wants the full page content.
 
     Returns:
         Cleaned string suitable for shipping to an LLM context window.
@@ -75,7 +83,7 @@ def clean_content(raw: str, url: str = "") -> str:
     if len(raw) < _CLEANUP_THRESHOLD and not _looks_like_html(raw):
         return raw.strip()
 
-    if not _looks_like_html(raw):
+    if not aggressive and not _looks_like_html(raw):
         # Looks like markdown / plain text — no structural extraction needed.
         return raw.strip()
 

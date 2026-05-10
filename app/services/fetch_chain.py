@@ -79,7 +79,7 @@ class FetchChain:
             return True
         return False
 
-    async def execute(self, url: str) -> FetchResult:
+    async def execute(self, url: str, aggressive_clean: bool = False) -> FetchResult:
         """Execute the tiered fetch chain for the given URL.
 
         Flow:
@@ -147,10 +147,10 @@ class FetchChain:
                     url,
                 )
                 result.fetch_time_ms = self._elapsed_ms(start_time)
-                return await self._firebreak_and_cache(url, start_time)
+                return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
             log.info("Crawl4AI succeeded for %s", url)
             get_collector().inc_tier("crawl4ai", "success")
-            result.markdown = clean_content(result.markdown, url=url)
+            result.markdown = clean_content(result.markdown, url=url, aggressive=aggressive_clean)
             result.fetch_time_ms = self._elapsed_ms(start_time)
             await self._store_fetch(url, result)
             return result
@@ -162,7 +162,7 @@ class FetchChain:
                 result.status_code,
             )
             result.fetch_time_ms = self._elapsed_ms(start_time)
-            return await self._firebreak_and_cache(url, start_time)
+            return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
 
         # Non-anti-bot failure — try Jina Reader
         log.info("Crawl4AI failed for %s (not anti-bot), trying Jina", url)
@@ -176,10 +176,10 @@ class FetchChain:
                     url,
                 )
                 jina_result.fetch_time_ms = self._elapsed_ms(start_time)
-                return await self._firebreak_and_cache(url, start_time)
+                return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
             log.info("Jina Reader succeeded for %s", url)
             get_collector().inc_tier("jina", "success")
-            jina_result.markdown = clean_content(jina_result.markdown, url=url)
+            jina_result.markdown = clean_content(jina_result.markdown, url=url, aggressive=aggressive_clean)
             jina_result.fetch_time_ms = self._elapsed_ms(start_time)
             await self._store_fetch(url, jina_result)
             return jina_result
@@ -191,7 +191,7 @@ class FetchChain:
                 jina_result.status_code,
             )
             jina_result.fetch_time_ms = self._elapsed_ms(start_time)
-            return await self._firebreak_and_cache(url, start_time)
+            return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
 
         # Not anti-bot — all public tiers exhausted, return failure directly
         log.info(
@@ -213,13 +213,13 @@ class FetchChain:
         if self._cache is not None:
             await self._cache.set_fetch(url, result.model_dump())
 
-    async def _firebreak_and_cache(self, url: str, start_time: float) -> FetchResult:
+    async def _firebreak_and_cache(self, url: str, start_time: float, aggressive_clean: bool = False) -> FetchResult:
         """Run firebreak then store the result in cache."""
-        result = await self._firebreak(url, start_time)
+        result = await self._firebreak(url, start_time, aggressive_clean=aggressive_clean)
         await self._store_fetch(url, result)
         return result
 
-    async def _firebreak(self, url: str, start_time: float) -> FetchResult:
+    async def _firebreak(self, url: str, start_time: float, aggressive_clean: bool = False) -> FetchResult:
         """Execute the anti-bot firebreak: Scrape.do → ScraperAPI.
 
         Only called for confirmed anti-bot blocks. Never called for routine
@@ -229,7 +229,7 @@ class FetchChain:
         if self._settings.SCRAPE_DO_API_KEY:
             scrape_do_result = await self._scrape_do.fetch(url)
             if scrape_do_result.success:
-                scrape_do_result.markdown = clean_content(scrape_do_result.markdown, url=url)
+                scrape_do_result.markdown = clean_content(scrape_do_result.markdown, url=url, aggressive=aggressive_clean)
                 log.info("Scrape.do succeeded for %s after cleaning", url)
                 get_collector().inc_tier("scrape_do", "success")
                 scrape_do_result.fetch_time_ms = self._elapsed_ms(start_time)
@@ -243,7 +243,7 @@ class FetchChain:
         if self._settings.SCRAPERAPI_API_KEY:
             scraper_api_result = await self._scraper_api.fetch(url)
             if scraper_api_result.success:
-                scraper_api_result.markdown = clean_content(scraper_api_result.markdown, url=url)
+                scraper_api_result.markdown = clean_content(scraper_api_result.markdown, url=url, aggressive=aggressive_clean)
                 log.info("ScraperAPI succeeded for %s after cleaning", url)
                 get_collector().inc_tier("scraperapi", "success")
                 scraper_api_result.fetch_time_ms = self._elapsed_ms(start_time)

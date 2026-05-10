@@ -161,7 +161,7 @@ class RetrieveService:
         log.info("Retrieve pipeline: fetching top %d URLs", len(top_urls))
 
         # ── Step 5: Parallel fetch ──────────────────────────────────────
-        fetch_tasks = [self._fetch.execute(u["url"]) for u in top_urls]
+        fetch_tasks = [self._fetch.execute(u["url"], aggressive_clean=True) for u in top_urls]
         fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
         sources: list[SourceChunk] = []

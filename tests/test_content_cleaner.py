@@ -295,8 +295,8 @@ class TestConsentDialogStrip:
     # ── Edge cases ──
 
     def test_short_text_unchanged(self) -> None:
-        """Text under 200 chars is left alone."""
-        md = "Short text."
+        """Text under 200 chars with no consent patterns is left alone."""
+        md = "Short text with no consent dialog."
         result = _strip_consent_dialogs(md)
         assert result == md
 
@@ -338,6 +338,24 @@ Confirm My Choices"""
         assert "Confirm My Choices" not in result
         assert "Consent Leg.Interest" not in result
         assert "browsing experience" not in result
+
+    def test_uefa_style_consent_only_page(self) -> None:
+        """UEFA pages that return only consent dialogs with no article content."""
+        md = """Consent to Cookies & Data processing
+We, and other third parties, use cookies and other technologies to process end device information and other categories of personal data (such as email addresses, IP-addresses, browser and device characteristics) for the following purposes: to store and/or access information on a device; to select personalised ads; to create ad user profiles; to develop and improve products; to measure ad and content performance; to measure audience; to apply market research to generate audience insights; to develop and improve products. We also use cookies and other technologies for these purposes: personalised ads and content, ad and content measurement, audience insights.
+
+You can manage your cookie preferences and withdraw your consent at any time via the "Privacy settings" link at the bottom of the webpage. Your choices will have effect only within the UEFA domain.
+
+Your personal data may be shared with certain third parties and processed by them. Your consent is voluntary and can be withdrawn at any time via the "Privacy settings" link at the bottom of the webpage.
+
+2026
+### 07 April 2026
+### 15 April 2026"""
+        result = _strip_consent_dialogs(md)
+        # The entire page is consent boilerplate
+        assert "consent" not in result.lower()
+        assert "cookies" not in result.lower()
+        assert "personal data" not in result.lower()
 
 
 class TestParagraphBoundaryTruncation:

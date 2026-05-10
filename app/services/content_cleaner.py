@@ -85,8 +85,9 @@ def _looks_like_html(content: str) -> bool:
 
 # ── Consent / cookie-dialog patterns ──────────────────────────────────
 # GDPR cookie consent dialogs, preference centres, and privacy notice
-# boilerplate that trafilatura includes in extracted text.  These always
-# appear *after* the real article content, never before it.
+# boilerplate that trafilatura includes in extracted text.  These usually
+# appear after the real article content, but can also be the entire page
+# when the source has no article content (e.g. UEFA consent-only pages).
 
 # Heading-level triggers: if we find one of these in the last 60% of text,
 # truncate from that point onward.
@@ -95,8 +96,8 @@ _CONSENT_HEADING_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r'^#{0,3}\s*Cookies?\s+Preference', re.IGNORECASE | re.MULTILINE),
     re.compile(r'^#{0,3}\s*Manage\s+Consent', re.IGNORECASE | re.MULTILINE),
     re.compile(r'^#{0,3}\s*Cookie\s+Preference\s+Centre', re.IGNORECASE | re.MULTILINE),
-    # "Cookies Policy" (plural) as a section heading
-    re.compile(r'^#{0,3}\s*Cookies?\s+Polic', re.IGNORECASE | re.MULTILINE),
+    # UEFA-style heading: "Consent to Cookies & Data processing"
+    re.compile(r'^#{0,3}\s*Consent\s+to\s+Cookies', re.IGNORECASE | re.MULTILINE),
 ]
 
 # Inline / line-level triggers: individual lines that are pure consent UI noise.
@@ -124,6 +125,10 @@ _CONSENT_LINE_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r'^You\s+need\s+an?\s+\w+\s+Membership\s+to\s+watch', re.IGNORECASE),
     re.compile(r'^Login\s+Create\s+account$', re.IGNORECASE),
     re.compile(r'^Disable\s+(some|all)\s+categor', re.IGNORECASE),
+    # UEFA-style consent UI
+    re.compile(r'^Consent\s+to\s+Cookies', re.IGNORECASE),
+    re.compile(r'^Reject\s+All$', re.IGNORECASE),
+    re.compile(r'^Privacy\s+settings?$', re.IGNORECASE),
 ]
 
 # Block-level triggers: multi-word phrases that indicate a consent section
@@ -138,6 +143,16 @@ _CONSENT_BLOCK_TRIGGERS: list[re.Pattern[str]] = [
     re.compile(r'targeting\s+cookies\s+help\s+us\s+to\s+connect', re.IGNORECASE),
     re.compile(r'we\s+use\s+cookies\s+to\s+improve\s+your\s+browsing', re.IGNORECASE),
     re.compile(r'show\s+you\s+more\s+relevant\s+ads\s+online', re.IGNORECASE),
+    # UEFA-style: "We, and other third parties, use cookies and other technologies"
+    re.compile(r'(?:we,?\s+(?:and\s+other\s+third\s+parties,?\s+)?)?use\s+cookies\s+and\s+other\s+technologies', re.IGNORECASE),
+    # "your consent is voluntary and can be withdrawn"
+    re.compile(r'your\s+consent\s+is\s+voluntary\s+and\s+can\s+be\s+withdrawn', re.IGNORECASE),
+    # "personal data may be shared with ... and processed by them"
+    re.compile(r'personal\s+data\s+may\s+be\s+shared\s+with', re.IGNORECASE),
+    # "store and/or access information on a device"
+    re.compile(r'store\s+and/or\s+access\s+information\s+on\s+a\s+device', re.IGNORECASE),
+    # "select personalised ads" (GDPR consent language)
+    re.compile(r'select\s+personalised\s+ads\b', re.IGNORECASE),
 ]
 
 

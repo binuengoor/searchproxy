@@ -79,6 +79,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _client = httpx.AsyncClient(
         timeout=httpx.Timeout(60.0),  # fallback; all services override with their own timeouts
         follow_redirects=True,
+        limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
+        http2=True,
     )
     # --- Observability ---
     from app.routers.logs import router as logs_router  # avoid circular import
@@ -127,7 +129,7 @@ app = FastAPI(
         "OpenAPI spec — agents should use the three primary tools above.\n\n"
         "**/metrics** — Prometheus monitoring. NOT a search tool."
     ),
-    version="0.7.0",
+    version="0.8.0",
     lifespan=lifespan,
 )
 # Force OpenAPI 3.0.3 for max client compatibility (MCPHub, Open WebUI).

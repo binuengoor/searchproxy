@@ -41,7 +41,7 @@ class Crawl4AIClient:
         """
         log.info("Crawl4AI fetch_markdown: %s", url)
 
-        body: dict[str, str] = {"url": url, "filter": "fit"}
+        body: dict[str, str] = {"url": url, "f": "fit"}
 
         try:
             response = await self._client.post(

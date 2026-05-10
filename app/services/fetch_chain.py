@@ -136,7 +136,7 @@ class FetchChain:
                 result.status_code,
                 result.error,
             )
-            await self._sleep(1.0)
+            await asyncio.sleep(1.0)
             result = await self._crawl4ai.fetch_markdown(url)
 
         if result.success:
@@ -150,7 +150,9 @@ class FetchChain:
                 return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
             log.info("Crawl4AI succeeded for %s", url)
             get_collector().inc_tier("crawl4ai", "success")
-            result.markdown = clean_content(result.markdown, url=url, aggressive=aggressive_clean)
+            result.markdown = await asyncio.get_event_loop().run_in_executor(
+                None, clean_content, result.markdown, url, aggressive_clean
+            )
             result.fetch_time_ms = self._elapsed_ms(start_time)
             await self._store_fetch(url, result)
             return result
@@ -179,7 +181,9 @@ class FetchChain:
                 return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
             log.info("Jina Reader succeeded for %s", url)
             get_collector().inc_tier("jina", "success")
-            jina_result.markdown = clean_content(jina_result.markdown, url=url, aggressive=aggressive_clean)
+            jina_result.markdown = await asyncio.get_event_loop().run_in_executor(
+                None, clean_content, jina_result.markdown, url, aggressive_clean
+            )
             jina_result.fetch_time_ms = self._elapsed_ms(start_time)
             await self._store_fetch(url, jina_result)
             return jina_result
@@ -203,11 +207,6 @@ class FetchChain:
         await self._store_fetch(url, jina_result)
         return jina_result
 
-    @staticmethod
-    async def _sleep(seconds: float) -> None:
-        """Async sleep for transient retry delay."""
-        await asyncio.sleep(seconds)
-
     async def _store_fetch(self, url: str, result: FetchResult) -> None:
         """Store a fetch result in the cache if caching is enabled."""
         if self._cache is not None:
@@ -229,7 +228,9 @@ class FetchChain:
         if self._settings.SCRAPE_DO_API_KEY:
             scrape_do_result = await self._scrape_do.fetch(url)
             if scrape_do_result.success:
-                scrape_do_result.markdown = clean_content(scrape_do_result.markdown, url=url, aggressive=aggressive_clean)
+                scrape_do_result.markdown = await asyncio.get_event_loop().run_in_executor(
+                    None, clean_content, scrape_do_result.markdown, url, aggressive_clean
+                )
                 log.info("Scrape.do succeeded for %s after cleaning", url)
                 get_collector().inc_tier("scrape_do", "success")
                 scrape_do_result.fetch_time_ms = self._elapsed_ms(start_time)
@@ -243,7 +244,9 @@ class FetchChain:
         if self._settings.SCRAPERAPI_API_KEY:
             scraper_api_result = await self._scraper_api.fetch(url)
             if scraper_api_result.success:
-                scraper_api_result.markdown = clean_content(scraper_api_result.markdown, url=url, aggressive=aggressive_clean)
+                scraper_api_result.markdown = await asyncio.get_event_loop().run_in_executor(
+                    None, clean_content, scraper_api_result.markdown, url, aggressive_clean
+                )
                 log.info("ScraperAPI succeeded for %s after cleaning", url)
                 get_collector().inc_tier("scraperapi", "success")
                 scraper_api_result.fetch_time_ms = self._elapsed_ms(start_time)

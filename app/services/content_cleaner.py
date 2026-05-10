@@ -16,7 +16,6 @@ import trafilatura  # type: ignore[import-untyped]
 
 log = logging.getLogger(__name__)
 
-import re
 
 _TAG_RE = re.compile(r'<[^>]+>')
 _WS_RE = re.compile(r'\n{3,}|\s{2,}')

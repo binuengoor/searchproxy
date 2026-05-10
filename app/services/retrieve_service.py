@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import AsyncIterator
+from typing import AsyncIterator, Any
 from urllib.parse import urlparse
 
 import httpx
@@ -182,8 +182,20 @@ class RetrieveService:
         log.info("Retrieve pipeline: fetching top %d URLs", len(top_urls))
 
         # ── Step 5: Parallel fetch ──────────────────────────────────────
-        fetch_tasks = [self._fetch.execute(u["url"], aggressive_clean=True) for u in top_urls]
-        fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        fetch_tasks = [asyncio.create_task(self._fetch.execute(u["url"], aggressive_clean=True)) for u in top_urls]
+        fetch_timeout = getattr(self._settings, "RETRIEVE_FETCH_TIMEOUT", 15.0)
+        done, pending = await asyncio.wait(fetch_tasks, timeout=fetch_timeout, return_when=asyncio.ALL_COMPLETED)
+        for task in pending:
+            task.cancel()
+        fetch_results: list[Any] = []
+        for task in fetch_tasks:
+            if task in done:
+                try:
+                    fetch_results.append(task.result())
+                except Exception as exc:
+                    fetch_results.append(exc)
+            else:
+                fetch_results.append(asyncio.TimeoutError(f"Fetch timed out after {fetch_timeout}s"))
 
         sources: list[SourceChunk] = []
         sources_failed = 0

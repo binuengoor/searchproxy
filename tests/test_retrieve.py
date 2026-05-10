@@ -572,14 +572,14 @@ async def test_retrieve_stream_false_returns_json(
 
 
 @pytest.mark.anyio
-async def test_retrieve_synthesize_strips_source_content(
+async def test_retrieve_synthesize_keeps_source_content(
     client: AsyncClient,
     mock_search: AsyncMock,
     mock_rerank: AsyncMock,
     mock_fetch: AsyncMock,
     mock_synthesize: AsyncMock,
 ):
-    """When synthesize=True, source content is stripped to save bandwidth."""
+    """When synthesize=True, source content is still returned for reference."""
     mock_search.return_value = SearchResponse(results=[
         SearchResult(title="Test", url="https://test.com", snippet="test"),
     ])
@@ -599,7 +599,7 @@ async def test_retrieve_synthesize_strips_source_content(
     data = resp.json()
     assert data["answer"] == "Test answer [1]."
     assert len(data["sources"]) == 1
-    assert data["sources"][0]["content"] == ""
+    assert data["sources"][0]["content"] != ""
     assert data["sources"][0]["content_length"] is not None
     assert data["sources"][0]["url"] == "https://test.com"
 

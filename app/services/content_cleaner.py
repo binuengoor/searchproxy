@@ -119,9 +119,9 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
     # fallback so the quality gate (min_length) can reject it if needed.
     # In non-aggressive mode (/fetch endpoint), return more because the
     # caller explicitly asked for this URL content.
-    fallback_chars = 1500 if aggressive else 8000
+    fallback_chars = 8000
     log.warning(
-        "trafilatura returned empty for %s, falling back to %d chars",
+        "trafilatura returned empty for %s, falling back to raw (first %d chars)",
         url,
         fallback_chars,
     )

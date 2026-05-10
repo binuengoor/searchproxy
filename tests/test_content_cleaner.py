@@ -76,12 +76,14 @@ class TestContentCleanerExtraction:
         assert "<script>" not in result
         assert "<style>" not in result
 
-    def test_returns_truncated_raw_on_failure(self) -> None:
-        """When trafilatura can't extract, we fall back to truncated raw."""
-        html = "<html><head></head><body></body></html>"
+    def test_strips_html_on_extraction_failure(self) -> None:
+        """When trafilatura can't extract, we fall back to HTML-stripped text."""
+        html = "<html><head></head><body><p>Hello world</p></body></html>"
         result = clean_content(html)
-        # Falls back to the raw HTML (truncated, but entire string < 8 000 chars)
-        assert result.startswith("<html>")
+        # HTML tags are stripped in the fallback path
+        assert "<html>" not in result
+        assert "<p>" not in result
+        assert "Hello world" in result
 
     def test_does_not_mutate_input(self) -> None:
         raw = "  some text  "
@@ -104,3 +106,19 @@ class TestMarkdownPreserved:
     def test_markdown_with_links(self) -> None:
         md = "Check out [this link](https://example.com)."
         assert clean_content(md) == md
+    def test_aggressive_strips_html_fallback_nav_heavy(self) -> None:
+        """Aggressive mode on a nav-heavy page (no article body) strips HTML in fallback."""
+        html = """<html><body>
+        <nav><a href="/">Home</a><a href="/shop">Shop</a></nav>
+        <div class="fixtures">
+          <span>Arsenal vs Chelsea - May 10</span>
+          <span>Liverpool vs Arsenal - May 17</span>
+        </div>
+        <footer><a href="/terms">Terms</a></footer>
+        </body></html>"""
+        result = clean_content(html, aggressive=True)
+        # No HTML tags should remain in the result
+        assert "<nav>" not in result
+        assert "<footer>" not in result
+        # Score/match info should still be present
+        assert "Arsenal" in result

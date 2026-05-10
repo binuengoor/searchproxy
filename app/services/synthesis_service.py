@@ -93,10 +93,12 @@ class SynthesisService:
 
         payload = self._build_payload(query, sources, stream=False)
 
+        total_chars = sum(len(s.content) for s in sources)
         log.info(
-            "Synthesizing answer for query='%s' with %d sources (model=%s, max_tokens=%d)",
+            "Synthesizing answer for query='%s' with %d sources, %d total chars (model=%s, max_tokens=%d)",
             query,
             len(sources),
+            total_chars,
             self._settings.LITELLM_CHAT_MODEL,
             self._settings.SYNTHESIS_MAX_TOKENS,
         )
@@ -106,7 +108,7 @@ class SynthesisService:
                 self._settings.LITELLM_CHAT_URL,
                 json=payload,
                 headers=headers,
-                timeout=httpx.Timeout(30.0, connect=5.0),
+                timeout=httpx.Timeout(60.0, connect=10.0),
             )
             response.raise_for_status()
             data = response.json()
@@ -171,7 +173,7 @@ class SynthesisService:
                 self._settings.LITELLM_CHAT_URL,
                 json=payload,
                 headers=headers,
-                timeout=httpx.Timeout(30.0, connect=5.0),
+                timeout=httpx.Timeout(60.0, connect=10.0),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():

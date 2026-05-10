@@ -196,7 +196,6 @@ class RetrieveService:
             original_idx = seen_keys.get(_canonical_key(url_info["url"]))
             relevance_score = rerank_score_by_idx.get(original_idx) if original_idx is not None else None
 
-            raw_content_length = len(content)
             content = _truncate_content(content, self._settings.RETRIEVE_MAX_CONTENT_PER_SOURCE)
 
             sources.append(SourceChunk(
@@ -204,7 +203,7 @@ class RetrieveService:
                 title=result.title or url_info["title"],
                 content=content,
                 fetch_tier=result.source or None,
-                content_length=raw_content_length,
+                content_length=len(content),
                 relevance_score=relevance_score,
                 fetch_time_ms=result.fetch_time_ms,
             ))

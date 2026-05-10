@@ -10,9 +10,36 @@ from __future__ import annotations
 
 import logging
 
+import re
+
 import trafilatura  # type: ignore[import-untyped]
 
 log = logging.getLogger(__name__)
+
+import re
+
+_TAG_RE = re.compile(r'<[^>]+>')
+_WS_RE = re.compile(r'\n{3,}|\s{2,}')
+
+def _strip_html_fallback(text: str) -> str:
+    """Best-effort HTML stripping for when trafilatura can't parse a page.
+    
+    Removes HTML tags, collapses excessive whitespace/newlines, and 
+    strips common navigation debris patterns.
+    """
+    # Remove script/style blocks entirely
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.IGNORECASE | re.DOTALL)
+    # Remove all remaining HTML tags
+    text = _TAG_RE.sub('', text)
+    # Decode common HTML entities
+    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    text = text.replace('&nbsp;', ' ').replace('&#39;', "'").replace('&quot;', '"')
+    # Collapse excessive whitespace
+    text = _WS_RE.sub('\n', text)
+    return text.strip()
+
+
 
 # Fragments that strongly indicate HTML rather than markdown / plain text.
 _HTML_INDICATORS: tuple[str, ...] = (
@@ -114,15 +141,15 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
         return extracted.strip()
 
     # Extraction failed - trafilatura could not find article content.
-    # In aggressive mode (retrieve pipeline), the page likely has no article
-    # body (score widgets, nav pages, betting markets). Return a short
-    # fallback so the quality gate (min_length) can reject it if needed.
-    # In non-aggressive mode (/fetch endpoint), return more because the
-    # caller explicitly asked for this URL content.
+    # Strip HTML tags and collapse whitespace as a best-effort cleanup.
+    # The quality gate (min_length) will reject truly useless pages.
     fallback_chars = 8000
+    cleaned = _strip_html_fallback(raw[:fallback_chars])
     log.warning(
-        "trafilatura returned empty for %s, falling back to raw (first %d chars)",
+        "trafilatura returned empty for %s, falling back to HTML-stripped first %d chars (%d → %d)",
         url,
         fallback_chars,
+        len(raw[:fallback_chars]),
+        len(cleaned),
     )
-    return raw[:fallback_chars].strip()
+    return cleaned

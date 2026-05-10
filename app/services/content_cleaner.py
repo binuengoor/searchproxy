@@ -96,6 +96,7 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
             include_tables=True,
             include_images=False,
             include_links=True,
+            favor_precision=True,
         )
     except Exception as exc:
         log.warning("trafilatura extraction failed for %s: %s", url, exc)
@@ -112,8 +113,16 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
         )
         return extracted.strip()
 
+    # Extraction failed - trafilatura could not find article content.
+    # In aggressive mode (retrieve pipeline), the page likely has no article
+    # body (score widgets, nav pages, betting markets). Return a short
+    # fallback so the quality gate (min_length) can reject it if needed.
+    # In non-aggressive mode (/fetch endpoint), return more because the
+    # caller explicitly asked for this URL content.
+    fallback_chars = 1500 if aggressive else 8000
     log.warning(
-        "trafilatura returned empty for %s, falling back to truncated raw",
+        "trafilatura returned empty for %s, falling back to %d chars",
         url,
+        fallback_chars,
     )
-    return raw[:8000].strip()
+    return raw[:fallback_chars].strip()

@@ -305,11 +305,28 @@ class RetrieveService:
             if i < len(sources) and citation.relevance_score is None:
                 citation.relevance_score = sources[i].relevance_score
 
+        # When synthesize=True, the LLM already consumed the source content.
+        # Return sources without content to save bandwidth — citations with
+        # URL/title/score are all the client needs. Content is kept only in
+        # the raw (synthesize=false) mode where it IS the response.
+        lean_sources = [
+            SourceChunk(
+                url=s.url,
+                title=s.title,
+                content="",
+                fetch_tier=s.fetch_tier,
+                content_length=s.content_length,
+                relevance_score=s.relevance_score,
+                fetch_time_ms=s.fetch_time_ms,
+            )
+            for s in sources
+        ]
+
         return RetrieveResponse(
             query=query,
             answer=answer,
             citations=citations,
-            sources=sources,
+            sources=lean_sources,
             sources_fetched=sources_fetched,
             sources_failed=sources_failed,
         )

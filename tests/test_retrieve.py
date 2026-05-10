@@ -569,3 +569,62 @@ async def test_retrieve_stream_false_returns_json(
     assert resp.headers["content-type"].startswith("application/json")
     data = resp.json()
     assert data["answer"] == "Json answer [1]."
+
+
+@pytest.mark.anyio
+async def test_retrieve_synthesize_strips_source_content(
+    client: AsyncClient,
+    mock_search: AsyncMock,
+    mock_rerank: AsyncMock,
+    mock_fetch: AsyncMock,
+    mock_synthesize: AsyncMock,
+):
+    """When synthesize=True, source content is stripped to save bandwidth."""
+    mock_search.return_value = SearchResponse(results=[
+        SearchResult(title="Test", url="https://test.com", snippet="test"),
+    ])
+    mock_rerank.return_value = [RerankResult(index=0, relevance_score=0.9, text="Test")]
+    mock_fetch.return_value = MockFetchResult(
+        success=True, url="https://test.com",
+        markdown="This is a comprehensive and detailed article that thoroughly covers the subject matter with extensive analysis, multiple examples, and in-depth discussion across many sections. The content provides substantial value through its comprehensive coverage of key topics, detailed explanations of important concepts, and practical insights that make it an excellent source for synthesis and research purposes. Additional paragraphs explore related themes and provide further context and depth.",
+        title="Test",
+    )
+    mock_synthesize.return_value = (
+        "Test answer [1].",
+        [Citation(id=1, url="https://test.com", title="Test")],
+    )
+
+    resp = await client.post("/v1/retrieve", json={"query": "test"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["answer"] == "Test answer [1]."
+    assert len(data["sources"]) == 1
+    assert data["sources"][0]["content"] == ""
+    assert data["sources"][0]["content_length"] is not None
+    assert data["sources"][0]["url"] == "https://test.com"
+
+
+@pytest.mark.anyio
+async def test_retrieve_no_synthesize_keeps_source_content(
+    client: AsyncClient,
+    mock_search: AsyncMock,
+    mock_rerank: AsyncMock,
+    mock_fetch: AsyncMock,
+    mock_synthesize: AsyncMock,
+):
+    """When synthesize=False, source content is kept in full."""
+    mock_search.return_value = SearchResponse(results=[
+        SearchResult(title="Test", url="https://test.com", snippet="test"),
+    ])
+    mock_rerank.return_value = [RerankResult(index=0, relevance_score=0.9, text="Test")]
+    mock_fetch.return_value = MockFetchResult(
+        success=True, url="https://test.com",
+        markdown="Full content here that should be preserved for the caller. This markdown is intentionally long enough to exceed the minimum content length quality gate of 300 characters, ensuring it passes the too-short check and appears in the response when synthesize is set to false. Additional padding to guarantee we exceed three hundred characters total length.",
+        title="Test",
+    )
+
+    resp = await client.post("/v1/retrieve", json={"query": "test", "synthesize": False})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["sources"]) == 1
+    assert "Full content here" in data["sources"][0]["content"]

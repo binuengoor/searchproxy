@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.content_cleaner import clean_content
+from app.services.content_cleaner import clean_content, _strip_consent_dialogs
 
 
 class TestLooksLikeHtmlDetector:
@@ -106,6 +106,7 @@ class TestMarkdownPreserved:
     def test_markdown_with_links(self) -> None:
         md = "Check out [this link](https://example.com)."
         assert clean_content(md) == md
+
     def test_aggressive_strips_html_fallback_nav_heavy(self) -> None:
         """Aggressive mode on a nav-heavy page (no article body) strips HTML in fallback."""
         html = """<html><body>
@@ -122,6 +123,7 @@ class TestMarkdownPreserved:
         assert "<footer>" not in result
         # Score/match info should still be present
         assert "Arsenal" in result
+
 
 class TestMarkdownSpamStrip:
     """Markdown nav/link-spam removal in aggressive mode."""
@@ -170,6 +172,172 @@ class TestMarkdownSpamStrip:
         assert "West Ham vs Arsenal" in result
         # The link-spam line should be removed
         assert "Bet365" not in result
+
+
+class TestConsentDialogStrip:
+    """GDPR cookie-consent dialog removal."""
+
+    # ── Heading truncation ──
+
+    def test_strips_cookie_policy_heading(self) -> None:
+        """Content after '## Cookies Policy' heading is removed."""
+        md = "# Arsenal Fixtures\n\nArsenal vs Chelsea - May 10.\n\n## Cookies Policy\n\nWe use cookies to improve your browsing experience.\n\nAccept All Cookies\n\nManage Consent Preferences"
+        result = _strip_consent_dialogs(md)
+        assert "Arsenal vs Chelsea" in result
+        assert "Cookies Policy" not in result
+        assert "browsing experience" not in result
+
+    def test_strips_cookie_preference_centre(self) -> None:
+        """Content after '### Cookie Preference Centre' is removed."""
+        md = "Arsenal won 3-0.\n\n## Cookie Preference Centre\n\nYou can manage which cookies are set.\n\nNecessary Cookies\nAlways Active"
+        result = _strip_consent_dialogs(md)
+        assert "Arsenal won" in result
+        assert "Cookie Preference" not in result
+        assert "manage which cookies" not in result
+
+    def test_cookie_policy_in_short_text_is_still_removed(self) -> None:
+        """'Cookies Policy' is never legitimate article content, even in short text."""
+        md = "## Cookies Policy\n\nThis document describes our cookie usage for the site.\n\nThe end."
+        result = _strip_consent_dialogs(md)
+        # Consent headings are always stripped — they're never real article content
+        assert "Cookies Policy" not in result
+        assert "cookie usage" not in result
+
+    # ── Block-level trigger truncation ──
+
+    def test_strips_cookie_block_by_content_phrase(self) -> None:
+        """Paragraphs containing 'we use cookies to improve your browsing' are removed from that point."""
+        md = "# Arsenal Fixtures\n\nArsenal vs Chelsea - May 10.\n\nWe use cookies to improve your browsing experience and help us improve our websites. We also carefully select third-party cookies to show you more relevant ads online.\n\nBy clicking \"THAT'S OK\", you agree to our use of cookies."
+        result = _strip_consent_dialogs(md)
+        assert "Arsenal vs Chelsea" in result
+        assert "improve your browsing" not in result
+
+    def test_strips_block_with_agree_and_cookie(self) -> None:
+        """'by clicking ... agree ... cookie' block trigger removes content from that point."""
+        md = "Match results here.\n\nBy clicking \"THAT'S OK\", you agree to our use of cookies in accordance with our Cookie Policy. The rest of the page is boilerplate."
+        result = _strip_consent_dialogs(md)
+        assert "Match results" in result
+        assert "by clicking" not in result.lower()
+
+    def test_strips_you_can_manage_cookies_paragraph(self) -> None:
+        """'you can manage which cookies are set' paragraph is removed."""
+        md = "Arsenal fixtures for 2025.\n\nYou can manage which cookies are set on your device by clicking on the different category headings below.\n\nSome more content."
+        result = _strip_consent_dialogs(md)
+        assert "Arsenal fixtures" in result
+        assert "manage which cookies" not in result
+
+    # ── Line-level noise removal ──
+
+    def test_strips_consent_ui_lines(self) -> None:
+        """Individual consent UI noise lines are removed from anywhere in text."""
+        md = "Article content.\n\nAccept All Cookies\n\nMore article.\n\nConfirm My Choices\n\nEnd."
+        result = _strip_consent_dialogs(md)
+        assert "Article content" in result
+        assert "More article" in result
+        assert "End" in result
+        assert "Accept All Cookies" not in result
+        assert "Confirm My Choices" not in result
+
+    def test_strips_checkbox_label_lines(self) -> None:
+        """'checkbox label label' UI noise is removed."""
+        md = "Real content.\n\ncheckbox label label\n\nMore real content."
+        result = _strip_consent_dialogs(md)
+        assert "Real content" in result
+        assert "More real content" in result
+        assert "checkbox label" not in result
+
+    def test_strips_login_create_account_line(self) -> None:
+        """'Login Create account' UI noise is removed."""
+        md = "Article text.\n\nLogin Create account\n\nMore article."
+        result = _strip_consent_dialogs(md)
+        assert "Article text" in result
+        assert "Login Create account" not in result
+
+    def test_strips_membership_wall_line(self) -> None:
+        """'You need an Arsenal Membership to watch' line is removed."""
+        md = "Match report.\n\nYou need an Arsenal Membership to watch this video\n\nSwitch User Become a member\n\nAnalysis."
+        result = _strip_consent_dialogs(md)
+        assert "Match report" in result
+        assert "Analysis" in result
+        assert "Membership to watch" not in result
+        assert "Switch User" not in result
+
+    # ── Integration with clean_content ──
+
+    def test_clean_content_aggressive_strips_consent(self) -> None:
+        """Full clean_content pipeline strips consent dialogs in aggressive mode."""
+        md = "# Arsenal FC\n\nArsenal play Chelsea on May 10.\n\n## Cookies Policy\n\nWe use cookies to improve your browsing experience.\n\nAccept All Cookies\n\nManage Consent Preferences\n\nNecessary Cookies\nAlways Active"
+        result = clean_content(md, aggressive=True)
+        assert "Arsenal play Chelsea" in result
+        assert "Cookies Policy" not in result
+        assert "Accept All Cookies" not in result
+        assert "Manage Consent" not in result
+
+    def test_clean_content_aggressive_strips_consent_from_html(self) -> None:
+        """Consent stripping also works when clean_content processes HTML via trafilatura."""
+        html = """<html><body>
+        <article>
+          <h1>Arsenal Transfer News</h1>
+          <p>Arsenal are close to signing a new striker.</p>
+        </article>
+        <div class="cookie-banner">
+          <h2>Cookies Policy</h2>
+          <p>We use cookies to improve your browsing experience and help us improve our websites.</p>
+          <p>By clicking "THAT'S OK", you agree to our use of cookies.</p>
+          <button>Accept All Cookies</button>
+        </div>
+        </body></html>"""
+        result = clean_content(html, aggressive=True)
+        assert "Arsenal Transfer News" in result
+        assert "browsing experience" not in result
+        assert "Accept All Cookies" not in result
+
+    # ── Edge cases ──
+
+    def test_short_text_unchanged(self) -> None:
+        """Text under 200 chars is left alone."""
+        md = "Short text."
+        result = _strip_consent_dialogs(md)
+        assert result == md
+
+    def test_empty_string_unchanged(self) -> None:
+        """Empty string returns empty."""
+        assert _strip_consent_dialogs("") == ""
+
+    def test_real_data_arsenal_source_2(self) -> None:
+        """Simulates the real Premier League source with consent dialog."""
+        md = """Arsenal Fixtures
+
+May 2026
+
+Arsenal vs West Ham - Sun May 10
+Burnley vs Arsenal - Mon May 18
+
+Cookie Policy
+
+We use cookies to improve your browsing experience. By clicking "THAT'S OK", you agree to our use of cookies.
+
+Manage Consent Preferences
+Necessary Cookies
+Always Active
+Non-essential cookies help us improve the functionality of our website.
+Allow All
+
+Cookie List
+Search Icon
+Filter Icon
+Clear
+checkbox label label
+Apply Cancel
+Consent Leg.Interest
+checkbox label label
+Confirm My Choices"""
+        result = _strip_consent_dialogs(md)
+        assert "Arsenal vs West Ham" in result
+        assert "Cookie Policy" not in result
+        assert "Confirm My Choices" not in result
+        assert "Consent Leg.Interest" not in result
+        assert "browsing experience" not in result
 
 
 class TestParagraphBoundaryTruncation:

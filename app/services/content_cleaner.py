@@ -21,6 +21,7 @@ import re
 _TAG_RE = re.compile(r'<[^>]+>')
 _WS_RE = re.compile(r'\n{3,}|\s{2,}')
 
+
 def _strip_html_fallback(text: str) -> str:
     """Best-effort HTML stripping for when trafilatura can't parse a page.
     
@@ -38,7 +39,6 @@ def _strip_html_fallback(text: str) -> str:
     # Collapse excessive whitespace
     text = _WS_RE.sub('\n', text)
     return text.strip()
-
 
 
 # Fragments that strongly indicate HTML rather than markdown / plain text.
@@ -83,6 +83,131 @@ def _looks_like_html(content: str) -> bool:
     return any(tag in normalised for tag in _HTML_INDICATORS)
 
 
+# ── Consent / cookie-dialog patterns ──────────────────────────────────
+# GDPR cookie consent dialogs, preference centres, and privacy notice
+# boilerplate that trafilatura includes in extracted text.  These always
+# appear *after* the real article content, never before it.
+
+# Heading-level triggers: if we find one of these in the last 60% of text,
+# truncate from that point onward.
+_CONSENT_HEADING_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r'^#{0,3}\s*Cookies?\s+Polic', re.IGNORECASE | re.MULTILINE),
+    re.compile(r'^#{0,3}\s*Cookies?\s+Preference', re.IGNORECASE | re.MULTILINE),
+    re.compile(r'^#{0,3}\s*Manage\s+Consent', re.IGNORECASE | re.MULTILINE),
+    re.compile(r'^#{0,3}\s*Cookie\s+Preference\s+Centre', re.IGNORECASE | re.MULTILINE),
+    # "Cookies Policy" (plural) as a section heading
+    re.compile(r'^#{0,3}\s*Cookies?\s+Polic', re.IGNORECASE | re.MULTILINE),
+]
+
+# Inline / line-level triggers: individual lines that are pure consent UI noise.
+# These are removed wherever they appear.
+_CONSENT_LINE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r'^Accept\s+All\s+Cookies?$', re.IGNORECASE),
+    re.compile(r'^LET ME CHOOSE$', re.IGNORECASE),
+    re.compile(r'^ONLY REQUIRED$', re.IGNORECASE),
+    re.compile(r"^THAT'?S\s+OK$", re.IGNORECASE),
+    re.compile(r'^Manage\s+Consent\s+Preferences?$', re.IGNORECASE),
+    re.compile(r'^Cookie\s+Settings?$', re.IGNORECASE),
+    re.compile(r'^Confirm\s+My\s+Choices?$', re.IGNORECASE),
+    re.compile(r'^Consent\s+Leg\.?\s*Interest$', re.IGNORECASE),
+    re.compile(r'^Back\s+Button$', re.IGNORECASE),
+    re.compile(r'^checkbox\s+label(\s+label)+$', re.IGNORECASE),
+    re.compile(r'^Apply\s+Cancel$', re.IGNORECASE),
+    re.compile(r'^Search\s+Icon$', re.IGNORECASE),
+    re.compile(r'^Filter\s+Icon$', re.IGNORECASE),
+    re.compile(r'^Clear$', re.IGNORECASE),
+    re.compile(r'^Cookie\s+List$', re.IGNORECASE),
+    re.compile(r'^(Necessary|Analytical|Targeting|Functional|Marketing)\s+Cookies?$', re.IGNORECASE),
+    re.compile(r'^Always\s+Active$', re.IGNORECASE),
+    re.compile(r'^Allow\s+All$', re.IGNORECASE),
+    re.compile(r'^Switch\s+User\s+Become\s+a\s+member$', re.IGNORECASE),
+    re.compile(r'^You\s+need\s+an?\s+\w+\s+Membership\s+to\s+watch', re.IGNORECASE),
+    re.compile(r'^Login\s+Create\s+account$', re.IGNORECASE),
+    re.compile(r'^Disable\s+(some|all)\s+categor', re.IGNORECASE),
+]
+
+# Block-level triggers: multi-word phrases that indicate a consent section
+# has started.  We search for these in the body to find the cut point.
+_CONSENT_BLOCK_TRIGGERS: list[re.Pattern[str]] = [
+    re.compile(r'by clicking\b.{0,30}\bagree\b.{0,60}\bcookie', re.IGNORECASE),
+    re.compile(r'you can manage\s+(?:which|your)\s+cookies?\s+(?:are\s+set|settings?)', re.IGNORECASE),
+    re.compile(r'manage\s+your\s+(?:non-?essential|cookie)\s+preferences', re.IGNORECASE),
+    re.compile(r'non-?essential\s+cookies?\s+(?:will\s+be\s+set|help\s+us)', re.IGNORECASE),
+    re.compile(r'disable\s+(?:some|any)\s+(?:categories?\s+)?of\s+cookies', re.IGNORECASE),
+    re.compile(r'these\s+cookies\s+(?:collect|are\s+essential|help\s+us)', re.IGNORECASE),
+    re.compile(r'targeting\s+cookies\s+help\s+us\s+to\s+connect', re.IGNORECASE),
+    re.compile(r'we\s+use\s+cookies\s+to\s+improve\s+your\s+browsing', re.IGNORECASE),
+    re.compile(r'show\s+you\s+more\s+relevant\s+ads\s+online', re.IGNORECASE),
+]
+
+
+def _strip_consent_dialogs(text: str) -> str:
+    """Remove GDPR cookie-consent dialogs and preference-centre boilerplate.
+
+    Strategy:
+    1. Look for consent heading patterns anywhere in the text.
+       If found, truncate from that heading onward — everything after is
+       consent boilerplate.  These headings (Cookie Policy, Cookies Policy,
+       Manage Consent Preferences, etc.) are never legitimate article content.
+    2. Look for block-level trigger phrases (paragraphs about cookies,
+       consent, managing preferences).  If found, truncate from that
+       paragraph onward.
+    3. Strip individual consent-UI noise lines wherever they appear.
+
+    Returns cleaned text.
+    """
+    if not text:
+        return text
+
+    text_len = len(text)
+    cutoff = text_len  # will be reduced if we find a consent section
+
+    # ── Step 1: Heading triggers — search entire text ──
+    # Consent headings like "Cookies Policy" are never legitimate article
+    # content regardless of where they appear in the text.
+    for pat in _CONSENT_HEADING_PATTERNS:
+        m = pat.search(text)
+        if m and m.start() < cutoff:
+            cutoff = m.start()
+
+    # ── Step 2: Block triggers — full-text scan for consent paragraphs ──
+    # Longer phrases that reliably indicate consent boilerplate.
+    for pat in _CONSENT_BLOCK_TRIGGERS:
+        m = pat.search(text)
+        if m and m.start() < cutoff:
+            # Walk back to the start of this paragraph (previous \n\n)
+            para_start = text.rfind('\n\n', 0, m.start())
+            if para_start < 0:
+                para_start = m.start()
+            else:
+                para_start += 2  # skip the \n\n itself
+            if para_start < cutoff:
+                cutoff = para_start
+
+    if cutoff < text_len:
+        text = text[:cutoff].rstrip()
+
+    # ── Step 3: Strip individual consent-UI noise lines ──
+    lines = text.split('\n')
+    kept: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            kept.append('')
+            continue
+        is_consent_noise = any(
+            pat.search(stripped) for pat in _CONSENT_LINE_PATTERNS
+        )
+        if not is_consent_noise:
+            kept.append(line)
+
+    result = '\n'.join(kept)
+    # Collapse 3+ blank lines to 2
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    return result.strip()
+
+
+# ── Markdown spam stripping ────────────────────────────────────────────
 
 _LINK_LINE_RE = re.compile(r'\[(?:[^\]]*)\]\([^)]+\)')
 _BARE_URL_RE = re.compile(r'https?://\S+')
@@ -137,6 +262,7 @@ def _strip_markdown_spam(text: str) -> str:
 
     return result.strip()
 
+
 def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
     """Return agent-friendly markdown text.
 
@@ -165,7 +291,7 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
         if not aggressive:
             return raw.strip()
         # Aggressive mode: still strip link-spam even on short content
-        return _strip_markdown_spam(raw.strip())
+        return _strip_consent_dialogs(_strip_markdown_spam(raw.strip()))
 
     if not aggressive and not _looks_like_html(raw):
         # Looks like markdown / plain text — no structural extraction needed.
@@ -174,7 +300,7 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
     # In aggressive mode with markdown input, skip trafilatura (it expects HTML)
     # but still strip markdown nav/link-spam.
     if aggressive and not _looks_like_html(raw):
-        cleaned = _strip_markdown_spam(raw.strip())
+        cleaned = _strip_consent_dialogs(_strip_markdown_spam(raw.strip()))
         log.info(
             "Content spam-stripped %s: %d → %d chars (%.1f%% reduction)",
             url, len(raw), len(cleaned),
@@ -198,8 +324,9 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
         extracted = None
 
     if extracted:
-        # Strip markdown nav/link-spam from extracted content
-        cleaned = _strip_markdown_spam(extracted.strip())
+        # Strip consent dialogs first (they're at the end and large),
+        # then strip markdown nav/link-spam from extracted content
+        cleaned = _strip_markdown_spam(_strip_consent_dialogs(extracted.strip()))
         raw_len, clean_len = len(raw), len(cleaned)
         log.info(
             "Content cleaned %s: %d → %d chars (%.1f%% reduction)",
@@ -215,7 +342,7 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
     # The quality gate (min_length) will reject truly useless pages.
     fallback_chars = 8000
     cleaned = _strip_html_fallback(raw[:fallback_chars])
-    cleaned = _strip_markdown_spam(cleaned)
+    cleaned = _strip_consent_dialogs(_strip_markdown_spam(cleaned))
     log.warning(
         "trafilatura returned empty for %s, falling back to HTML+spam-stripped first %d chars (%d → %d)",
         url,

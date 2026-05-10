@@ -1,7 +1,9 @@
 """FastAPI dependency helpers.
 
 Centralizes all DI factory functions so routers stay thin and service
-construction is consistent. Each router imports only the `Depends()` it needs.
+construction is consistent. Services are singletons — created once and reused
+across requests — since they hold no per-request state beyond a shared
+httpx.AsyncClient and settings reference.
 """
 
 from __future__ import annotations
@@ -17,7 +19,14 @@ from app.services.searxng_compat import SearxngCompatService
 from app.services.synthesis_service import SynthesisService
 from app.services.vane_proxy import VaneProxyClient
 
-_cache_service: "CacheService | None" = None
+_cache_service: CacheService | None = None
+_fetch_chain: FetchChain | None = None
+_litellm_client: LiteLLMSearchClient | None = None
+_rerank_service: RerankService | None = None
+_synthesis_service: SynthesisService | None = None
+_retrieve_service: RetrieveService | None = None
+_searxng_service: SearxngCompatService | None = None
+_vane_client: VaneProxyClient | None = None
 
 
 def _get_cache() -> CacheService:
@@ -29,47 +38,66 @@ def _get_cache() -> CacheService:
 
 
 def get_fetch_chain() -> FetchChain:
-    """Build a FetchChain from shared infrastructure."""
-    return FetchChain(client=get_client(), settings=settings, cache=_get_cache())
+    """Return the shared FetchChain singleton."""
+    global _fetch_chain
+    if _fetch_chain is None:
+        _fetch_chain = FetchChain(client=get_client(), settings=settings, cache=_get_cache())
+    return _fetch_chain
 
 
 def get_litellm_client() -> LiteLLMSearchClient:
-    """Build a LiteLLMSearchClient from shared infrastructure."""
-    return LiteLLMSearchClient(client=get_client(), settings=settings, cache=_get_cache())
+    """Return the shared LiteLLMSearchClient singleton."""
+    global _litellm_client
+    if _litellm_client is None:
+        _litellm_client = LiteLLMSearchClient(client=get_client(), settings=settings, cache=_get_cache())
+    return _litellm_client
 
 
 def get_rerank_service() -> RerankService:
-    """Build a RerankService from shared infrastructure."""
-    return RerankService(client=get_client(), settings=settings)
+    """Return the shared RerankService singleton."""
+    global _rerank_service
+    if _rerank_service is None:
+        _rerank_service = RerankService(client=get_client(), settings=settings, cache=_get_cache())
+    return _rerank_service
 
 
 def get_synthesis_service() -> SynthesisService:
-    """Build a SynthesisService from shared infrastructure."""
-    return SynthesisService(client=get_client(), settings=settings)
+    """Return the shared SynthesisService singleton."""
+    global _synthesis_service
+    if _synthesis_service is None:
+        _synthesis_service = SynthesisService(client=get_client(), settings=settings)
+    return _synthesis_service
 
 
 def get_retrieve_service() -> RetrieveService:
-    """Build a RetrieveService (full pipeline) from shared infrastructure."""
-    client = get_client()
-    cache = _get_cache()
-    return RetrieveService(
-        search_client=LiteLLMSearchClient(client=client, settings=settings, cache=cache),
-        fetch_chain=FetchChain(client=client, settings=settings, cache=cache),
-        rerank_service=RerankService(client=client, settings=settings),
-        synthesis_service=SynthesisService(client=client, settings=settings),
-        settings=settings,
-    )
+    """Return the shared RetrieveService (full pipeline) singleton."""
+    global _retrieve_service
+    if _retrieve_service is None:
+        _retrieve_service = RetrieveService(
+            search_client=get_litellm_client(),
+            fetch_chain=get_fetch_chain(),
+            rerank_service=get_rerank_service(),
+            synthesis_service=get_synthesis_service(),
+            settings=settings,
+        )
+    return _retrieve_service
 
 
 def get_searxng_service() -> SearxngCompatService:
-    """Build a SearxngCompatService from shared infrastructure."""
-    return SearxngCompatService(
-        litellm_client=LiteLLMSearchClient(client=get_client(), settings=settings, cache=_get_cache()),
-        http_client=get_client(),
-        settings=settings,
-    )
+    """Return the shared SearxngCompatService singleton."""
+    global _searxng_service
+    if _searxng_service is None:
+        _searxng_service = SearxngCompatService(
+            litellm_client=get_litellm_client(),
+            http_client=get_client(),
+            settings=settings,
+        )
+    return _searxng_service
 
 
 def get_vane_client() -> VaneProxyClient:
-    """Build a VaneProxyClient from shared infrastructure."""
-    return VaneProxyClient(client=get_client(), settings=settings)
+    """Return the shared VaneProxyClient singleton."""
+    global _vane_client
+    if _vane_client is None:
+        _vane_client = VaneProxyClient(client=get_client(), settings=settings)
+    return _vane_client

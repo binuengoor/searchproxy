@@ -2,13 +2,17 @@
 
 Optional. If OBSERVABILITY_ENABLED is false, all operations are no-ops.
 No external containers, no network overhead, set-and-forget.
+
+Uses persistent thread-local connections to avoid open/close overhead per operation.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -77,18 +81,24 @@ class ObservabilityStore:
         else:
             log.info("Observability disabled")
 
-    @contextmanager
-    def _conn(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
+    # Thread-local connection — avoids open/close per operation
+    _local = threading.local()
 
-    def _init_schema(self) -> None:
-        with self._conn() as conn:
+    def _get_conn(self) -> sqlite3.Connection:
+        """Get a thread-local connection, creating and initializing one if needed."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(str(self._db_path))
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            self._local.conn = conn
+            self._init_schema_on_conn(conn)
+        return conn
+
+    def _init_schema_on_conn(self, conn: sqlite3.Connection) -> None:
+        """Ensure schema exists on a given connection (idempotent)."""
+        try:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS request_logs (
@@ -135,6 +145,13 @@ class ObservabilityStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_correlation_id ON request_logs(correlation_id)"
             )
+            conn.commit()
+        except Exception:
+            log.exception("Observability schema init failed")
+
+    def _init_schema(self) -> None:
+        """Initialize schema (calls _get_conn which handles per-conn setup)."""
+        self._get_conn()
 
     async def insert(self, record: LogRecord) -> None:
         if not self._enabled:
@@ -142,7 +159,8 @@ class ObservabilityStore:
         await asyncio.to_thread(self._insert_sync, record)
 
     def _insert_sync(self, record: LogRecord) -> None:
-        with self._conn() as conn:
+        conn = self._get_conn()
+        try:
             conn.execute(
                 """
                 INSERT INTO request_logs (
@@ -171,6 +189,9 @@ class ObservabilityStore:
                     record.correlation_id,
                 ),
             )
+            conn.commit()
+        except Exception:
+            log.warning("Observability insert failed", exc_info=True)
 
     async def purge_old(self) -> int:
         if not self._enabled or self._retention_days <= 0:
@@ -179,7 +200,8 @@ class ObservabilityStore:
         return await asyncio.to_thread(self._purge_sync, cutoff)
 
     def _purge_sync(self, cutoff: float) -> int:
-        with self._conn() as conn:
+        conn = self._get_conn()
+        try:
             cur = conn.execute(
                 "DELETE FROM request_logs WHERE timestamp < ?", (cutoff,)
             )
@@ -187,7 +209,11 @@ class ObservabilityStore:
             if deleted:
                 log.info("Purged %d old observability records", deleted)
                 conn.execute("VACUUM")
+                conn.commit()
             return deleted
+        except Exception:
+            log.warning("Observability purge failed", exc_info=True)
+            return 0
 
     async def delete_all(self) -> int:
         """Delete every record in the store. Returns number of rows removed."""
@@ -196,13 +222,18 @@ class ObservabilityStore:
         return await asyncio.to_thread(self._delete_all_sync)
 
     def _delete_all_sync(self) -> int:
-        with self._conn() as conn:
+        conn = self._get_conn()
+        try:
             cur = conn.execute("DELETE FROM request_logs")
             deleted = cur.rowcount
             if deleted:
                 log.info("Cleared all %d observability records", deleted)
                 conn.execute("VACUUM")
+                conn.commit()
             return deleted
+        except Exception:
+            log.warning("Observability delete_all failed", exc_info=True)
+            return 0
 
     async def query(
         self,
@@ -244,6 +275,7 @@ class ObservabilityStore:
         start_time: float | None,
         end_time: float | None,
     ) -> tuple[list[dict[str, Any]], int]:
+        conn = self._get_conn()
         where = ["1=1"]
         params: list[Any] = []
         if method:
@@ -278,7 +310,7 @@ class ObservabilityStore:
 
         where_clause = " AND ".join(where)
 
-        with self._conn() as conn:
+        try:
             count_cur = conn.execute(
                 f"SELECT COUNT(*) FROM request_logs WHERE {where_clause}", params
             )
@@ -295,6 +327,9 @@ class ObservabilityStore:
             )
             rows = [dict(row) for row in cur.fetchall()]
             return rows, total
+        except Exception:
+            log.warning("Observability query failed", exc_info=True)
+            return [], 0
 
 
 def get_store() -> ObservabilityStore | None:

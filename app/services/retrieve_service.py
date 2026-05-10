@@ -1,7 +1,12 @@
-"""Retrieve orchestrator — composes search ➜ rerank ➜ fetch ➜ synthesize.
+"""Retrieve orchestrator — composes search → rerank → fetch → synthesize.
 
 The /v1/retrieve endpoint's core pipeline. Each step is a separate service
 with its own client, making the orchestration easy to test and extend.
+
+Performance optimization: when RETRIEVE_PREFETCH_DURING_RERANK is enabled
+(default), the pipeline speculatively starts fetching top search results
+*rather than* waiting for the rerank call to return. This overlaps the
+rerank latency (1-2s) with fetching, saving 1-2s per request.
 """
 
 from __future__ import annotations
@@ -41,13 +46,18 @@ _PAYWALL_PATTERNS = [
     "upgrade to premium",
     "to continue reading",
     "please log in",
-    "access denied",
 ]
 _PAYWALL_RE = re.compile(r"(?:" + "|".join(re.escape(p) for p in _PAYWALL_PATTERNS) + r")", re.IGNORECASE)
 
 
 def _is_likely_paywall(content: str) -> bool:
-    """Detect paywall/login-wall pages by common phrases."""
+    """Detect paywall/login-wall pages by common phrases.
+
+    Removed 'access denied' — too many false positives from legitimate
+    pages that include this phrase in non-paywall contexts (API docs,
+    error pages, Cloudflare challenges). Real 403 blocks are caught by
+    the fetch chain's anti-bot detection instead.
+    """
     if len(content) < 200:
         # Very short content is suspicious regardless of keywords
         return True
@@ -99,7 +109,7 @@ def _truncate_content(content: str, max_chars: int) -> str:
 
 
 class RetrieveService:
-    """Orchestrates: search → dedup → rerank → parallel fetch → chunk → synthesize.
+    """Orchestrates: search → dedup → rerank → parallel fetch → synthesize.
 
     Each step can fail independently; the service degrades gracefully:
     - Search returns 0 results → empty response
@@ -156,9 +166,23 @@ class RetrieveService:
 
         log.info("Retrieve pipeline: %d results after dedup (from %d)", len(deduped), len(search_resp.results))
 
-        # ── Step 3: Rerank ──────────────────────────────────────────────
+        # ── Step 3: Rerank (with optional speculative prefetch) ─────────
         rerank_docs = [f"{d['title']}: {d['snippet']}" if d['title'] else d['snippet'] for d in deduped]
         top_k_rerank = min(self._settings.RETRIEVE_RERANK_TOP_K, len(rerank_docs))
+
+        # Speculatively start fetching top search results while rerank runs,
+        # saving 1-2s by overlapping network calls.
+        prefetch_tasks: dict[str, asyncio.Task] = {}
+        if self._settings.RETRIEVE_PREFETCH_DURING_RERANK:
+            # Prefetch the top fetch_top_k URLs from search order (not yet reranked)
+            prefetch_count = min(fetch_top_k, len(deduped))
+            for i in range(prefetch_count):
+                url = deduped[i]["url"]
+                prefetch_tasks[url] = asyncio.create_task(
+                    self._fetch.execute(url, aggressive_clean=True),
+                    name=f"prefetch:{url[:80]}",
+                )
+            log.info("Retrieve pipeline: speculatively prefetching %d URLs during rerank", len(prefetch_tasks))
 
         reranked_indices: list[int] | None = None
         rerank_results = await self._rerank.rerank(query=query, documents=rerank_docs, top_k=top_k_rerank)
@@ -181,9 +205,23 @@ class RetrieveService:
 
         log.info("Retrieve pipeline: fetching top %d URLs", len(top_urls))
 
-        # ── Step 5: Parallel fetch ──────────────────────────────────────
-        fetch_tasks = [asyncio.create_task(self._fetch.execute(u["url"], aggressive_clean=True)) for u in top_urls]
-        fetch_timeout = getattr(self._settings, "RETRIEVE_FETCH_TIMEOUT", 15.0)
+        # ── Step 5: Parallel fetch (reuse prefetch results where available) ──
+        top_url_set = {u["url"] for u in top_urls}
+        fetch_tasks: list[asyncio.Task] = []
+
+        for url_info in top_urls:
+            url = url_info["url"]
+            if url in prefetch_tasks:
+                # Reuse the speculative prefetch task for this URL
+                fetch_tasks.append(prefetch_tasks[url])
+            else:
+                # URL wasn't prefetched (not in top search results) — start fresh
+                fetch_tasks.append(asyncio.create_task(
+                    self._fetch.execute(url, aggressive_clean=True),
+                    name=f"fetch:{url[:80]}",
+                ))
+
+        fetch_timeout = self._settings.RETRIEVE_FETCH_TIMEOUT
         done, pending = await asyncio.wait(fetch_tasks, timeout=fetch_timeout, return_when=asyncio.ALL_COMPLETED)
         for task in pending:
             task.cancel()
@@ -197,10 +235,15 @@ class RetrieveService:
             else:
                 fetch_results.append(asyncio.TimeoutError(f"Fetch timed out after {fetch_timeout}s"))
 
+        # Cancel any prefetch tasks that weren't selected by rerank
+        for url, task in prefetch_tasks.items():
+            if url not in top_url_set:
+                task.cancel()
+
         sources: list[SourceChunk] = []
         sources_failed = 0
         sources_skipped_quality = 0
-        min_content_length = getattr(self._settings, "RETRIEVE_MIN_CONTENT_LENGTH", 300)
+        min_content_length = self._settings.RETRIEVE_MIN_CONTENT_LENGTH
 
         for url_info, result in zip(top_urls, fetch_results):
             if isinstance(result, Exception):
@@ -212,7 +255,7 @@ class RetrieveService:
                 sources_failed += 1
                 continue
 
-            # ── Step 5a: Quality gates ───────────────────────────────────
+            # ── Step 5a: Quality gates ───────────────────────────────
             content = result.markdown
             if _is_too_short(content, min_content_length):
                 log.info(

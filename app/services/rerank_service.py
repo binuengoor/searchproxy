@@ -3,6 +3,10 @@
 Calls the /v1/rerank endpoint on cf-inference (Cloudflare Workers AI) to
 rerank search results by relevance to the query. Falls back gracefully —
 if reranking fails, original order is preserved.
+
+Supports optional caching: if CacheService is provided, rerank results are
+cached with a configurable TTL. Same query + same documents = same scores,
+so caching is safe and deterministic.
 """
 
 from __future__ import annotations
@@ -33,9 +37,15 @@ class RerankService:
     service returns None so the caller can fall back to original ordering.
     """
 
-    def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        settings: Settings,
+        cache: "CacheService | None" = None,
+    ) -> None:
         self._client = client
         self._settings = settings
+        self._cache = cache
 
     async def rerank(
         self,
@@ -55,6 +65,16 @@ class RerankService:
         """
         if not documents:
             return []
+
+        # ── Cache read ────────────────────────────────────────────────
+        if self._cache is not None:
+            cached = await self._cache.get_rerank(query, documents)
+            if cached is not None:
+                log.info("Cache HIT for rerank: '%s' (%d documents)", query, len(documents))
+                try:
+                    return [RerankResult(index=r["index"], relevance_score=r["relevance_score"], text=r["text"]) for r in cached]
+                except Exception as exc:
+                    log.warning("Rerank cache deserialization failed for '%s': %s", query, exc)
 
         url = self._settings.CF_RERANK_URL
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -109,4 +129,10 @@ class RerankService:
             results.append(RerankResult(index=idx, relevance_score=score, text=text))
 
         log.info("Reranker returned %d results for query '%s'", len(results), query)
+
+        # ── Cache write ───────────────────────────────────────────────
+        if self._cache is not None and results:
+            cache_data = [{"index": r.index, "relevance_score": r.relevance_score, "text": r.text} for r in results]
+            await self._cache.set_rerank(query, documents, cache_data)
+
         return results

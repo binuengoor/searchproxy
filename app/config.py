@@ -60,18 +60,28 @@ class Settings(BaseSettings):
         default=20,
         description="Number of search results to send to the reranker.",
     )
-    SYNTHESIS_MAX_TOKENS: int = Field(
-        default=2048,
-        description="Max tokens for the LLM synthesis response.",
-    )
     RETRIEVE_MIN_CONTENT_LENGTH: int = Field(
         default=300,
         description="Minimum characters of fetched content for a source to be included in synthesis.",
     )
+    RETRIEVE_FETCH_TIMEOUT: float = Field(
+        default=15.0,
+        description="Timeout in seconds for the parallel fetch phase of /v1/retrieve.",
+    )
+    RETRIEVE_PREFETCH_DURING_RERANK: bool = Field(
+        default=True,
+        description="Speculatively start fetching top search results during rerank to overlap latency.",
+    )
+    SYNTHESIS_MAX_TOKENS: int = Field(
+        default=2048,
+        description="Max tokens for the LLM synthesis response.",
+    )
+
     # --- Caching ---
-    CACHE_ENABLED: bool = Field(default=False, description="Enable SQLite caching for search and fetch results.")
+    CACHE_ENABLED: bool = Field(default=False, description="Enable SQLite caching for search, fetch, and rerank results.")
     CACHE_SEARCH_TTL: int = Field(default=300, description="TTL for search cache entries in seconds.")
     CACHE_FETCH_TTL: int = Field(default=86400, description="TTL for fetch cache entries in seconds.")
+    CACHE_RERANK_TTL: int = Field(default=300, description="TTL for rerank cache entries in seconds.")
     CACHE_DB_PATH: str = Field(default="/data/cache.db", description="Path to SQLite cache database.")
 
     # --- Vane deep research ---

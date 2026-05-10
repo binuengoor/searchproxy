@@ -1,17 +1,21 @@
-"""SQLite caching layer for search results and fetch results.
+"""SQLite caching layer for search, fetch, and rerank results.
 
 Optional. If CACHE_ENABLED is false, all operations are no-ops.
 TTL is enforced lazily on read — no background purging needed.
 Survives container restarts via Docker volume mount (same as observability.db).
 
-Inspired by app/observability.py — same SQLite-in-container pattern.
+Uses persistent connections via threading.local to avoid open/close overhead
+on every operation. Cache keys use hashlib.sha256 for deterministic hashing
+across process restarts.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -23,108 +27,50 @@ log = logging.getLogger(__name__)
 class CacheService:
     """Persistent key-value cache with TTL.
 
-    Safe for async usage: all blocking SQLite calls run in the default
-    event loop's thread executor.
+    Safe for async usage: all blocking SQLite calls run via asyncio.to_thread.
+    Uses a thread-local connection to avoid open/close overhead per operation.
     """
+
+    _local = threading.local()
 
     def __init__(self, settings: Settings) -> None:
         self._enabled = settings.CACHE_ENABLED
-        self._db_path = Path(settings.CACHE_DB_PATH)
+        self._db_path = str(Path(settings.CACHE_DB_PATH))
         self._search_ttl = settings.CACHE_SEARCH_TTL
         self._fetch_ttl = settings.CACHE_FETCH_TTL
+        self._rerank_ttl = settings.CACHE_RERANK_TTL
 
         if self._enabled:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._init_schema()
-            log.info("Cache enabled: %s (search_ttl=%ds, fetch_ttl=%ds)", self._db_path, self._search_ttl, self._fetch_ttl)
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+            # Initialize schema on the main thread connection
+            self._ensure_schema()
+            log.info("Cache enabled: %s (search_ttl=%ds, fetch_ttl=%ds, rerank_ttl=%ds)", self._db_path, self._search_ttl, self._fetch_ttl, self._rerank_ttl)
         else:
             log.info("Cache disabled")
 
     # ------------------------------------------------------------------
-    # Public API
+    # Thread-local connection management
     # ------------------------------------------------------------------
 
-    async def get_search(self, query: str, max_results: int) -> Any | None:
-        """Get cached search result (SearchResponse JSON)."""
-        if not self._enabled:
-            return None
-        key = self._search_key(query, max_results)
-        return await self._get(key)
+    def _get_conn(self) -> sqlite3.Connection:
+        """Get a thread-local connection, creating and initializing one if needed."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self._db_path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            self._local.conn = conn
+            # Ensure schema exists on this connection's first use
+            self._init_schema_on_conn(conn)
+        return conn
 
-    async def set_search(self, query: str, max_results: int, value: Any) -> None:
-        """Cache a search result."""
-        if not self._enabled:
-            return
-        key = self._search_key(query, max_results)
-        await self._set(key, value, self._search_ttl)
+    def _ensure_schema(self) -> None:
+        """Initialize schema on the main thread connection."""
+        conn = self._get_conn()
+        # Schema init already done via _get_conn -> _init_schema_on_conn
 
-    async def get_fetch(self, url: str) -> Any | None:
-        """Get cached fetch result (FetchResult JSON)."""
-        if not self._enabled:
-            return None
-        key = self._fetch_key(url)
-        return await self._get(key)
-
-    async def set_fetch(self, url: str, value: Any) -> None:
-        """Cache a fetch result."""
-        if not self._enabled:
-            return
-        key = self._fetch_key(url)
-        await self._set(key, value, self._fetch_ttl)
-
-    async def invalidate(self, key: str) -> None:
-        """Remove a single key from cache."""
-        if not self._enabled:
-            return
-        await self._run_in_executor(self._delete_sync, key)
-
-    async def clear(self) -> None:
-        """Remove all entries from cache."""
-        if not self._enabled:
-            return
-        await self._run_in_executor(self._clear_sync)
-
-    async def stats(self) -> dict[str, Any]:
-        """Return cache stats (total entries, expired entries)."""
-        if not self._enabled:
-            return {"enabled": False, "total": 0, "expired": 0}
-        return await self._run_in_executor(self._stats_sync)
-
-    # ------------------------------------------------------------------
-    # Key helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _search_key(query: str, max_results: int) -> str:
-        """Normalize query and build a stable cache key."""
-        normalized = " ".join(query.strip().lower().split())
-        return f"search:{hash(normalized + f':{max_results}')}"
-
-    @staticmethod
-    def _fetch_key(url: str) -> str:
-        return f"fetch:{hash(url.strip().lower())}"
-
-    # ------------------------------------------------------------------
-    # Core operations (run in executor for async safety)
-    # ------------------------------------------------------------------
-
-    async def _get(self, key: str) -> Any | None:
-        return await self._run_in_executor(self._get_sync, key)
-
-    async def _set(self, key: str, value: Any, ttl: int) -> None:
-        await self._run_in_executor(self._set_sync, key, value, ttl)
-
-    @staticmethod
-    async def _run_in_executor(fn, *args):  # type: ignore[no-untyped-def]
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, fn, *args)
-
-    # ------------------------------------------------------------------
-    # Synchronous SQLite internals
-    # ------------------------------------------------------------------
-
-    def _init_schema(self) -> None:
-        conn = sqlite3.connect(self._db_path)
+    def _init_schema_on_conn(self, conn: sqlite3.Connection) -> None:
+        """Create tables and indexes if they don't exist on the given connection."""
         try:
             conn.execute(
                 """
@@ -137,13 +83,109 @@ class CacheService:
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at)")
             conn.commit()
-        finally:
-            conn.close()
+        except Exception:
+            log.exception("Cache schema init failed")
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def get_search(self, query: str, max_results: int) -> Any | None:
+        """Get cached search result (SearchResponse JSON)."""
+        if not self._enabled:
+            return None
+        key = self._search_key(query, max_results)
+        return await asyncio.to_thread(self._get_sync, key)
+
+    async def set_search(self, query: str, max_results: int, value: Any) -> None:
+        """Cache a search result."""
+        if not self._enabled:
+            return
+        key = self._search_key(query, max_results)
+        await asyncio.to_thread(self._set_sync, key, value, self._search_ttl)
+
+    async def get_fetch(self, url: str) -> Any | None:
+        """Get cached fetch result (FetchResult JSON)."""
+        if not self._enabled:
+            return None
+        key = self._fetch_key(url)
+        return await asyncio.to_thread(self._get_sync, key)
+
+    async def set_fetch(self, url: str, value: Any) -> None:
+        """Cache a fetch result."""
+        if not self._enabled:
+            return
+        key = self._fetch_key(url)
+        await asyncio.to_thread(self._set_sync, key, value, self._fetch_ttl)
+
+    async def get_rerank(self, query: str, documents: list[str]) -> Any | None:
+        """Get cached rerank result (list of RerankResult-like dicts)."""
+        if not self._enabled:
+            return None
+        key = self._rerank_key(query, documents)
+        return await asyncio.to_thread(self._get_sync, key)
+
+    async def set_rerank(self, query: str, documents: list[str], value: Any) -> None:
+        """Cache a rerank result."""
+        if not self._enabled:
+            return
+        key = self._rerank_key(query, documents)
+        await asyncio.to_thread(self._set_sync, key, value, self._rerank_ttl)
+
+    async def invalidate(self, key: str) -> None:
+        """Remove a single key from cache."""
+        if not self._enabled:
+            return
+        await asyncio.to_thread(self._delete_sync, key)
+
+    async def clear(self) -> None:
+        """Remove all entries from cache."""
+        if not self._enabled:
+            return
+        await asyncio.to_thread(self._clear_sync)
+
+    async def stats(self) -> dict[str, Any]:
+        """Return cache stats (total entries, expired entries)."""
+        if not self._enabled:
+            return {"enabled": False, "total": 0, "expired": 0}
+        return await asyncio.to_thread(self._stats_sync)
+
+    # ------------------------------------------------------------------
+    # Key helpers — deterministic hashing via hashlib.sha256
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _search_key(query: str, max_results: int) -> str:
+        """Normalize query and build a stable cache key."""
+        normalized = " ".join(query.strip().lower().split())
+        digest = hashlib.sha256(f"{normalized}:{max_results}".encode()).hexdigest()[:16]
+        return f"search:{digest}"
+
+    @staticmethod
+    def _fetch_key(url: str) -> str:
+        digest = hashlib.sha256(url.strip().lower().encode()).hexdigest()[:16]
+        return f"fetch:{digest}"
+
+    @staticmethod
+    def _rerank_key(query: str, documents: list[str]) -> str:
+        """Build a deterministic cache key from query + document fingerprints.
+
+        Uses SHA-256 of (query + concatenated doc hashes) so the same
+        query with the same documents always produces the same key,
+        even across process restarts.
+        """
+        normalized_query = " ".join(query.strip().lower().split())
+        doc_fingerprints = "|".join(documents)
+        digest = hashlib.sha256(f"rerank:{normalized_query}:{doc_fingerprints}".encode()).hexdigest()[:16]
+        return f"rerank:{digest}"
+
+    # ------------------------------------------------------------------
+    # Synchronous SQLite internals (run via asyncio.to_thread)
+    # ------------------------------------------------------------------
 
     def _get_sync(self, key: str) -> Any | None:
         import time
-
-        conn = sqlite3.connect(self._db_path)
+        conn = self._get_conn()
         try:
             row = conn.execute(
                 "SELECT value, expires_at FROM cache WHERE key = ?",
@@ -157,13 +199,13 @@ class CacheService:
                 conn.commit()
                 return None
             return json.loads(value_json)
-        finally:
-            conn.close()
+        except Exception:
+            log.warning("Cache read failed for key %s", key, exc_info=True)
+            return None
 
     def _set_sync(self, key: str, value: Any, ttl: int) -> None:
         import time
-
-        conn = sqlite3.connect(self._db_path)
+        conn = self._get_conn()
         try:
             expires_at = time.time() + ttl
             value_json = json.dumps(value, default=str)
@@ -178,29 +220,28 @@ class CacheService:
                 (key, value_json, expires_at),
             )
             conn.commit()
-        finally:
-            conn.close()
+        except Exception:
+            log.warning("Cache write failed for key %s", key, exc_info=True)
 
     def _delete_sync(self, key: str) -> None:
-        conn = sqlite3.connect(self._db_path)
+        conn = self._get_conn()
         try:
             conn.execute("DELETE FROM cache WHERE key = ?", (key,))
             conn.commit()
-        finally:
-            conn.close()
+        except Exception:
+            log.warning("Cache delete failed for key %s", key, exc_info=True)
 
     def _clear_sync(self) -> None:
-        conn = sqlite3.connect(self._db_path)
+        conn = self._get_conn()
         try:
             conn.execute("DELETE FROM cache")
             conn.commit()
-        finally:
-            conn.close()
+        except Exception:
+            log.warning("Cache clear failed", exc_info=True)
 
     def _stats_sync(self) -> dict[str, Any]:
         import time
-
-        conn = sqlite3.connect(self._db_path)
+        conn = self._get_conn()
         try:
             total = conn.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
             expired = conn.execute(
@@ -208,5 +249,5 @@ class CacheService:
                 (time.time(),),
             ).fetchone()[0]
             return {"enabled": True, "total": total, "expired": expired}
-        finally:
-            conn.close()
+        except Exception:
+            return {"enabled": True, "total": 0, "expired": 0}

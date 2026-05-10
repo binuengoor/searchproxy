@@ -2,6 +2,9 @@
 
 Intercepts http.response.start and http.response.body ASGI messages directly,
 so the full response body is available before Starlette wraps it in any proxy.
+
+Skips response body capture for streaming responses (text/event-stream) to
+avoid buffering large SSE streams in memory.
 """
 from __future__ import annotations
 
@@ -26,6 +29,12 @@ _EXCLUDED_PATHS = {
     "/logs",
     "/api/logs",
 }
+
+# Content types that indicate streaming — skip body capture to save memory
+_STREAMING_CONTENT_TYPES = frozenset({
+    "text/event-stream",
+    "text/plain; charset=utf-8",  # Vane streaming
+})
 
 
 def _derive_source(path: str, response_body: str) -> str:
@@ -88,7 +97,7 @@ class ObservabilityMiddleware:
 
         if path not in _EXCLUDED_PATHS and method in ("POST", "PUT", "PATCH"):
             # Intercept receive to capture body
-            body_parts = []
+            body_parts: list[bytes] = []
             original_receive = receive
 
             async def _receive() -> dict:
@@ -120,16 +129,25 @@ class ObservabilityMiddleware:
         status_code = 0
         response_headers: dict = {}
         response_body_parts: list[bytes] = []
+        is_streaming = False
 
         original_send = send
 
         async def _send(msg: dict) -> None:
-            nonlocal status_code, response_headers
+            nonlocal status_code, response_headers, is_streaming
             if msg["type"] == "http.response.start":
                 status_code = msg.get("status", 0)
+                # Check if this is a streaming response
+                resp_ct = ""
+                for k, v in msg.get("headers", []):
+                    if k.decode().lower() == "content-type":
+                        resp_ct = v.decode().lower()
+                is_streaming = resp_ct in _STREAMING_CONTENT_TYPES
                 response_headers = {k.decode(): v.decode() for k, v in msg.get("headers", [])}
             elif msg["type"] == "http.response.body":
-                response_body_parts.append(msg.get("body", b""))
+                # Only buffer response body for non-streaming responses
+                if not is_streaming:
+                    response_body_parts.append(msg.get("body", b""))
             await original_send(msg)
 
         try:
@@ -146,13 +164,16 @@ class ObservabilityMiddleware:
                     full_body = b"".join(body_parts)
                     req_body = full_body[:8_192].decode("utf-8", errors="replace")
 
-                # Assemble response body
-                full_resp_body = b"".join(response_body_parts)
-                resp_body = full_resp_body[:8_192].decode("utf-8", errors="replace") if full_resp_body else ""
-                if not resp_body:
-                    resp_body = "[body not captured]"
+                # Assemble response body (skip for streaming to save memory)
+                if is_streaming:
+                    resp_body = "[streaming response — body not captured]"
+                else:
+                    full_resp_body = b"".join(response_body_parts)
+                    resp_body = full_resp_body[:8_192].decode("utf-8", errors="replace") if full_resp_body else ""
+                    if not resp_body:
+                        resp_body = "[body not captured]"
 
-                source = _derive_source(path, resp_body)
+                source = _derive_source(path, resp_body if not is_streaming else "")
 
                 # Client IP
                 client = scope.get("client")

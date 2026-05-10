@@ -107,6 +107,7 @@ class FetchChain:
 
         Args:
             url: The target URL to fetch.
+            aggressive_clean: If True, run aggressive boilerplate removal.
 
         Returns:
             FetchResult from the first successful tier, or a failure result
@@ -114,7 +115,7 @@ class FetchChain:
         """
         start_time = time.perf_counter()
 
-        # ── Cache read ────────────────────────────────────────────────────
+        # ── Cache read ────────────────────────────────────────────────
         if self._cache is not None:
             cached = await self._cache.get_fetch(url)
             if cached is not None:
@@ -150,9 +151,7 @@ class FetchChain:
                 return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
             log.info("Crawl4AI succeeded for %s", url)
             get_collector().inc_tier("crawl4ai", "success")
-            result.markdown = await asyncio.get_event_loop().run_in_executor(
-                None, clean_content, result.markdown, url, aggressive_clean
-            )
+            result.markdown = await asyncio.to_thread(clean_content, result.markdown, url, aggressive_clean)
             result.fetch_time_ms = self._elapsed_ms(start_time)
             await self._store_fetch(url, result)
             return result
@@ -181,9 +180,7 @@ class FetchChain:
                 return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
             log.info("Jina Reader succeeded for %s", url)
             get_collector().inc_tier("jina", "success")
-            jina_result.markdown = await asyncio.get_event_loop().run_in_executor(
-                None, clean_content, jina_result.markdown, url, aggressive_clean
-            )
+            jina_result.markdown = await asyncio.to_thread(clean_content, jina_result.markdown, url, aggressive_clean)
             jina_result.fetch_time_ms = self._elapsed_ms(start_time)
             await self._store_fetch(url, jina_result)
             return jina_result
@@ -228,8 +225,8 @@ class FetchChain:
         if self._settings.SCRAPE_DO_API_KEY:
             scrape_do_result = await self._scrape_do.fetch(url)
             if scrape_do_result.success:
-                scrape_do_result.markdown = await asyncio.get_event_loop().run_in_executor(
-                    None, clean_content, scrape_do_result.markdown, url, aggressive_clean
+                scrape_do_result.markdown = await asyncio.to_thread(
+                    clean_content, scrape_do_result.markdown, url, aggressive_clean
                 )
                 log.info("Scrape.do succeeded for %s after cleaning", url)
                 get_collector().inc_tier("scrape_do", "success")
@@ -244,8 +241,8 @@ class FetchChain:
         if self._settings.SCRAPERAPI_API_KEY:
             scraper_api_result = await self._scraper_api.fetch(url)
             if scraper_api_result.success:
-                scraper_api_result.markdown = await asyncio.get_event_loop().run_in_executor(
-                    None, clean_content, scraper_api_result.markdown, url, aggressive_clean
+                scraper_api_result.markdown = await asyncio.to_thread(
+                    clean_content, scraper_api_result.markdown, url, aggressive_clean
                 )
                 log.info("ScraperAPI succeeded for %s after cleaning", url)
                 get_collector().inc_tier("scraperapi", "success")

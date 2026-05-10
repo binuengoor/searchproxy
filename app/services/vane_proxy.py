@@ -135,7 +135,6 @@ class VaneProxyClient:
                 raise
 
         # Should never be reached, but satisfies the type checker.
-        assert last_exc is not None
         raise last_exc
 
     async def research(self, query: str, optimization_mode: str = "balanced") -> str:

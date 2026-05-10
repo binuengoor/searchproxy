@@ -124,7 +124,7 @@ async def test_fetch_chain_crawl4ai_success(fetch_chain):
     assert result.success is True
     assert result.source == "crawl4ai"
     assert result.markdown == "# Hello"
-    chain._crawl4ai.fetch_markdown.assert_awaited_once_with("https://example.com")
+    chain._crawl4ai.fetch_markdown.assert_awaited_once_with("https://example.com", content_filter=None, content_query=None)
     chain._jina.fetch.assert_not_awaited()
     chain._scrape_do.fetch.assert_not_awaited()
 

@@ -253,7 +253,7 @@ async def test_retrieve_partial_fetch_failure(
     mock_synthesize: AsyncMock,
 ):
     """When some fetches succeed and some fail, response reflects both counts."""
-    async def side_effect_fetch(url: str, aggressive_clean: bool = False):
+    async def side_effect_fetch(url: str, aggressive_clean: bool = False, **kwargs):
         if "a.com" in url:
             return MockFetchResult(
                 success=True, url=url, markdown="This is a comprehensive article with good content that covers the topic in substantial detail. The article provides multiple paragraphs of valuable information including analysis, examples, and supporting data that makes it highly suitable for synthesis and produces a high quality research result. Additional sections provide more depth and context for a complete understanding.", title="OK",
@@ -301,7 +301,7 @@ async def test_retrieve_skips_too_short_content(
         RerankResult(index=1, relevance_score=0.9, text="Good"),
     ]
 
-    async def side_effect(url: str, aggressive_clean: bool = False):
+    async def side_effect(url: str, aggressive_clean: bool = False, **kwargs):
         if "short" in url:
             return MockFetchResult(success=True, url=url, markdown="Hi", title="Short")
         return MockFetchResult(success=True, url=url, markdown="This is a comprehensive and detailed article that thoroughly covers the subject matter with extensive analysis, multiple examples, and in-depth discussion across many sections. The content provides substantial value through its comprehensive coverage of key topics, detailed explanations of important concepts, and practical insights that make it an excellent source for synthesis and research purposes. Additional paragraphs explore related themes and provide further context and depth.", title="Good")
@@ -337,7 +337,7 @@ async def test_retrieve_skips_paywall_content(
         RerankResult(index=1, relevance_score=0.9, text="Good"),
     ]
 
-    async def side_effect(url: str, aggressive_clean: bool = False):
+    async def side_effect(url: str, aggressive_clean: bool = False, **kwargs):
         if "paywall" in url:
             return MockFetchResult(
                 success=True, url=url,

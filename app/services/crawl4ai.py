@@ -26,7 +26,12 @@ class Crawl4AIClient:
             connect=5.0,
         )
 
-    async def fetch_markdown(self, url: str) -> FetchResult:
+    async def fetch_markdown(
+        self,
+        url: str,
+        content_filter: str | None = None,
+        content_query: str | None = None,
+    ) -> FetchResult:
         """POST to Crawl4AI /md for plain markdown fetch.
 
         Graceful degradation: on any error (timeout, HTTP error, parse failure)
@@ -35,13 +40,17 @@ class Crawl4AIClient:
 
         Args:
             url: The target URL to fetch.
+            content_filter: Crawl4AI filter mode — 'fit' (default), 'bm25', or 'raw'.
+            content_query: BM25 query string. Required when content_filter='bm25'.
 
         Returns:
             FetchResult with markdown content on success, or success=False on failure.
         """
-        log.info("Crawl4AI fetch_markdown: %s", url)
+        log.info("Crawl4AI fetch_markdown: %s (filter=%s)", url, content_filter or "fit")
 
-        body: dict[str, str] = {"url": url, "f": "fit"}
+        body: dict[str, str] = {"url": url, "f": content_filter or "fit"}
+        if content_filter == "bm25" and content_query:
+            body["q"] = content_query
 
         try:
             response = await self._client.post(

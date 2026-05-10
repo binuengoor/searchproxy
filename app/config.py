@@ -65,7 +65,7 @@ class Settings(BaseSettings):
         description="Minimum characters of fetched content for a source to be included in synthesis.",
     )
     RETRIEVE_FETCH_TIMEOUT: float = Field(
-        default=15.0,
+        default=25.0,
         description="Timeout in seconds for the parallel fetch phase of /v1/retrieve.",
     )
     RETRIEVE_PREFETCH_DURING_RERANK: bool = Field(

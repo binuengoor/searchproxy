@@ -79,7 +79,14 @@ class FetchChain:
             return True
         return False
 
-    async def execute(self, url: str, aggressive_clean: bool = False) -> FetchResult:
+    async def execute(
+        self,
+        url: str,
+        aggressive_clean: bool = False,
+        skip_firebreak: bool = False,
+        content_filter: str | None = None,
+        content_query: str | None = None,
+    ) -> FetchResult:
         """Execute the tiered fetch chain for the given URL.
 
         Flow:
@@ -108,6 +115,12 @@ class FetchChain:
         Args:
             url: The target URL to fetch.
             aggressive_clean: If True, run aggressive boilerplate removal.
+            skip_firebreak: If True, skip anti-bot paid services (Scrape.do,
+                ScraperAPI). Used during speculative prefetch to avoid wasting
+                paid API calls on URLs that rerank may discard.
+            content_filter: Crawl4AI filter mode ('fit', 'bm25', 'raw').
+                When 'bm25', content_query must also be provided.
+            content_query: BM25 query for Crawl4AI content filtering.
 
         Returns:
             FetchResult from the first successful tier, or a failure result
@@ -128,7 +141,9 @@ class FetchChain:
                 log.info("Cache MISS for fetch: %s", url)
 
         # ── Tier 1: Crawl4AI (with 1 transient retry) ────────────────────
-        result = await self._crawl4ai.fetch_markdown(url)
+        result = await self._crawl4ai.fetch_markdown(
+            url, content_filter=content_filter, content_query=content_query,
+        )
 
         if not result.success and self._is_transient(result):
             log.warning(
@@ -138,7 +153,9 @@ class FetchChain:
                 result.error,
             )
             await asyncio.sleep(1.0)
-            result = await self._crawl4ai.fetch_markdown(url)
+            result = await self._crawl4ai.fetch_markdown(
+                url, content_filter=content_filter, content_query=content_query,
+            )
 
         if result.success:
             if _is_anti_bot_block(result.status_code, result.markdown):
@@ -158,6 +175,10 @@ class FetchChain:
 
         # Crawl4AI failed permanently — determine if it's an anti-bot block
         if self._is_anti_bot(result):
+            if skip_firebreak:
+                log.info("Crawl4AI anti-bot for %s but skip_firebreak=True; returning failure", url)
+                result.fetch_time_ms = self._elapsed_ms(start_time)
+                return result
             log.warning(
                 "Crawl4AI failed with %s — anti-bot detected, skipping Jina, escalating to firebreak",
                 result.status_code,
@@ -171,6 +192,10 @@ class FetchChain:
         if jina_result.success:
             # Jina returned HTTP 200, but check if the body is actually an anti-bot page
             if _is_anti_bot_block(jina_result.status_code, jina_result.markdown):
+                if skip_firebreak:
+                    log.info("Jina anti-bot for %s but skip_firebreak=True; returning failure", url)
+                    jina_result.fetch_time_ms = self._elapsed_ms(start_time)
+                    return jina_result
                 log.warning(
                     "Jina Reader returned %s but anti-bot content detected for %s, escalating to firebreak",
                     jina_result.status_code,
@@ -187,6 +212,10 @@ class FetchChain:
 
         # Jina failed — only firebreak for confirmed anti-bot blocks
         if self._is_anti_bot(jina_result):
+            if skip_firebreak:
+                log.info("Jina anti-bot for %s but skip_firebreak=True; returning failure", url)
+                jina_result.fetch_time_ms = self._elapsed_ms(start_time)
+                return jina_result
             log.warning(
                 "Jina Reader failed with %s — anti-bot detected, escalating to firebreak",
                 jina_result.status_code,

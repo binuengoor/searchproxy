@@ -96,7 +96,7 @@ class RerankService:
                 url,
                 json=body,
                 headers=headers,
-                timeout=httpx.Timeout(15.0, connect=5.0),
+                timeout=httpx.Timeout(15.0, connect=self._settings.CONNECT_TIMEOUT),
             )
             response.raise_for_status()
             data = response.json()

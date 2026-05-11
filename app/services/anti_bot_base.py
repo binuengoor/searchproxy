@@ -9,6 +9,7 @@ from urllib.parse import quote
 import httpx
 
 from app.config import Settings
+from app.services.fetch_utils import safe_fetch
 from app.services.models import FetchResult
 
 log = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ class AntiBotClient:
         self._settings = settings
         self._timeout = httpx.Timeout(
             timeout=float(settings.ANTIBOT_TIMEOUT),
-            connect=5.0,
+            connect=self._settings.CONNECT_TIMEOUT,
         )
         self._tracker: dict[str, int] = {
             "used": 0,
@@ -111,59 +112,23 @@ class AntiBotClient:
         log.info("%s fetch: %s", self._SERVICE_NAME, url)
         scrape_url = self._build_url(url)
 
-        try:
-            response = await self._client.get(
-                scrape_url,
-                timeout=self._timeout,
-            )
-            status_code = response.status_code
-            response.raise_for_status()
-            html = response.text
-        except httpx.TimeoutException:
-            log.warning("%s fetch timed out for %s", self._SERVICE_NAME, url)
-            return FetchResult(
-                success=False,
-                url=url,
-                error="timeout",
-                source=self._SOURCE,
-            )
-        except httpx.HTTPStatusError as exc:
-            log.warning(
-                "%s fetch returned HTTP %d for %s",
-                self._SERVICE_NAME,
-                exc.response.status_code,
-                url,
-            )
-            return FetchResult(
-                success=False,
-                url=url,
-                error=f"HTTP {exc.response.status_code}",
-                status_code=exc.response.status_code,
-                source=self._SOURCE,
-            )
-        except Exception as exc:
-            log.warning("%s fetch failed for %s: %s", self._SERVICE_NAME, url, exc)
-            return FetchResult(
-                success=False,
-                url=url,
-                error=str(exc),
-                source=self._SOURCE,
-            )
+        result = await safe_fetch(
+            self._client,
+            method="GET",
+            url=scrape_url,
+            source=self._SOURCE,
+            timeout=self._timeout,
+        )
 
         # Increment credit counter on success
-        self._tracker["used"] = used + 1
-        log.info(
-            "%s fetch succeeded for %s — credits used: %d/%d",
-            self._SERVICE_NAME,
-            url,
-            self._tracker["used"],
-            limit,
-        )
+        if result.success:
+            self._tracker["used"] = used + 1
+            log.info(
+                "%s fetch succeeded for %s — credits used: %d/%d",
+                self._SERVICE_NAME,
+                url,
+                self._tracker["used"],
+                limit,
+            )
 
-        return FetchResult(
-            success=True,
-            url=url,
-            markdown=html,  # Raw HTML — markdown conversion can be added later
-            status_code=status_code,
-            source=self._SOURCE,
-        )
+        return result

@@ -136,7 +136,7 @@ class SearxngCompatService:
         self._settings = settings
         self._timeout = httpx.Timeout(
             timeout=float(settings.SEARCH_TIMEOUT),
-            connect=5.0,
+            connect=self._settings.CONNECT_TIMEOUT,
         )
 
     def _should_passthrough(self, params: SearxngParams) -> bool:

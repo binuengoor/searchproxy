@@ -245,45 +245,75 @@ class FetchChain:
         return result
 
     async def _firebreak(self, url: str, start_time: float, aggressive_clean: bool = False) -> FetchResult:
-        """Execute the anti-bot firebreak: Scrape.do → ScraperAPI.
+        """Execute the anti-bot firebreak: Scrape.do and ScraperAPI in parallel.
 
         Only called for confirmed anti-bot blocks. Never called for routine
         5xx or timeout failures. Inherits start_time for end-to-end timing.
+
+        Both anti-bot services run concurrently — the first successful result
+        wins, and the other is cancelled. This reduces latency by the time
+        the first service would have spent waiting for the second sequentially.
         """
-        # ── Tier 2a: Scrape.do ─────────────────────────────────────────────
+        tasks: list[asyncio.Task] = []
+        task_names: dict[asyncio.Task, str] = {}
+
         if self._settings.SCRAPE_DO_API_KEY:
-            scrape_do_result = await self._scrape_do.fetch(url)
-            if scrape_do_result.success:
-                scrape_do_result.markdown = await asyncio.to_thread(
-                    clean_content, scrape_do_result.markdown, url, aggressive_clean
-                )
-                log.info("Scrape.do succeeded for %s after cleaning", url)
-                get_collector().inc_tier("scrape_do", "success")
-                scrape_do_result.fetch_time_ms = self._elapsed_ms(start_time)
-                return scrape_do_result
-            get_collector().inc_tier("scrape_do", "fail")
-            log.warning("Scrape.do failed for %s, trying ScraperAPI", url)
+            t = asyncio.create_task(self._scrape_do.fetch(url), name="firebreak:scrape_do")
+            tasks.append(t)
+            task_names[t] = "scrape_do"
         else:
             log.info("Scrape.do skipped: SCRAPE_DO_API_KEY not set")
 
-        # ── Tier 2b: ScraperAPI ────────────────────────────────────────────
         if self._settings.SCRAPERAPI_API_KEY:
-            scraper_api_result = await self._scraper_api.fetch(url)
-            if scraper_api_result.success:
-                scraper_api_result.markdown = await asyncio.to_thread(
-                    clean_content, scraper_api_result.markdown, url, aggressive_clean
-                )
-                log.info("ScraperAPI succeeded for %s after cleaning", url)
-                get_collector().inc_tier("scraperapi", "success")
-                scraper_api_result.fetch_time_ms = self._elapsed_ms(start_time)
-                return scraper_api_result
-            get_collector().inc_tier("scraperapi", "fail")
-            log.warning("ScraperAPI failed for %s", url)
+            t = asyncio.create_task(self._scraper_api.fetch(url), name="firebreak:scraperapi")
+            tasks.append(t)
+            task_names[t] = "scraperapi"
         else:
             log.info("ScraperAPI skipped: SCRAPERAPI_API_KEY not set")
 
-        # All tiers exhausted
-        log.warning("All fetch tiers exhausted for %s", url)
+        if not tasks:
+            log.warning("No anti-bot services configured for %s", url)
+            return FetchResult(
+                success=False,
+                url=url,
+                error="all tiers exhausted",
+                source="",
+                fetch_time_ms=self._elapsed_ms(start_time),
+            )
+
+        # Return the first successful result; cancel remaining tasks
+        result: FetchResult | None = None
+        try:
+            for coro in asyncio.as_completed(tasks):
+                task_result = await coro
+                name = task_names.get(asyncio.current_task(), "unknown")
+                # Find the task name by matching result
+                if task_result.success:
+                    task_result.markdown = await asyncio.to_thread(
+                        clean_content, task_result.markdown, url, aggressive_clean
+                    )
+                    source_name = task_result.source or "anti_bot"
+                    log.info("Anti-bot firebreak succeeded for %s via %s", url, source_name)
+                    get_collector().inc_tier(source_name, "success")
+                    task_result.fetch_time_ms = self._elapsed_ms(start_time)
+                    result = task_result
+                    break
+                else:
+                    source_name = task_result.source or "anti_bot"
+                    get_collector().inc_tier(source_name, "fail")
+                    log.warning("Anti-bot tier %s failed for %s: %s", source_name, url, task_result.error)
+        except Exception as exc:
+            log.warning("Anti-bot firebreak error for %s: %s", url, exc)
+        finally:
+            # Cancel any still-running tasks
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+
+        if result is not None:
+            return result
+
+        log.warning("All anti-bot tiers exhausted for %s", url)
         return FetchResult(
             success=False,
             url=url,

@@ -74,7 +74,7 @@ class LiteLLMSearchClient:
         self._cache = cache
         self._timeout = httpx.Timeout(
             timeout=float(settings.SEARCH_TIMEOUT),
-            connect=5.0,
+            connect=self._settings.CONNECT_TIMEOUT,
         )
 
     async def search(

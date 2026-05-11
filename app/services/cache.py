@@ -20,11 +20,12 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Settings
+from app.services.sqlite_base import SQLiteBase
 
 log = logging.getLogger(__name__)
 
 
-class CacheService:
+class CacheService(SQLiteBase):
     """Persistent key-value cache with TTL.
 
     Safe for async usage: all blocking SQLite calls run via asyncio.to_thread.
@@ -205,8 +206,8 @@ class CacheService:
 
     def _set_sync(self, key: str, value: Any, ttl: int) -> None:
         import time
-        conn = self._get_conn()
-        try:
+
+        def _write_cache(conn: sqlite3.Connection, key: str, value: Any, ttl: int) -> None:
             expires_at = time.time() + ttl
             value_json = json.dumps(value, default=str)
             conn.execute(
@@ -219,23 +220,33 @@ class CacheService:
                 """,
                 (key, value_json, expires_at),
             )
-            conn.commit()
+
+        try:
+            self._write(_write_cache, key, value, ttl)
+        except sqlite3.OperationalError:
+            log.warning("Cache write failed after retries for key %s", key, exc_info=True)
         except Exception:
             log.warning("Cache write failed for key %s", key, exc_info=True)
 
     def _delete_sync(self, key: str) -> None:
-        conn = self._get_conn()
-        try:
+        def _delete_row(conn: sqlite3.Connection, key: str) -> None:
             conn.execute("DELETE FROM cache WHERE key = ?", (key,))
-            conn.commit()
+
+        try:
+            self._write(_delete_row, key)
+        except sqlite3.OperationalError:
+            log.warning("Cache delete failed after retries for key %s", key, exc_info=True)
         except Exception:
             log.warning("Cache delete failed for key %s", key, exc_info=True)
 
     def _clear_sync(self) -> None:
-        conn = self._get_conn()
-        try:
+        def _clear_all(conn: sqlite3.Connection) -> None:
             conn.execute("DELETE FROM cache")
-            conn.commit()
+
+        try:
+            self._write(_clear_all)
+        except sqlite3.OperationalError:
+            log.warning("Cache clear failed after retries", exc_info=True)
         except Exception:
             log.warning("Cache clear failed", exc_info=True)
 

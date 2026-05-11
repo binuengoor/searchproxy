@@ -7,6 +7,7 @@ import logging
 import httpx
 
 from app.config import Settings
+from app.services.fetch_utils import safe_fetch
 from app.services.models import FetchResult
 
 log = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ class Crawl4AIClient:
         self._settings = settings
         self._timeout = httpx.Timeout(
             timeout=float(settings.CRAWL4AI_TIMEOUT),
-            connect=5.0,
+            connect=self._settings.CONNECT_TIMEOUT,
         )
 
     async def fetch_markdown(
@@ -52,75 +53,12 @@ class Crawl4AIClient:
         if content_filter == "bm25" and content_query:
             body["q"] = content_query
 
-        try:
-            response = await self._client.post(
-                f"{self._settings.CRAWL4AI_URL}/md",
-                json=body,
-                timeout=self._timeout,
-            )
-            status_code = response.status_code
-
-            if status_code == 403:
-                log.warning("Crawl4AI returned 403 for %s — anti-bot block", url)
-                return FetchResult(
-                    success=False,
-                    url=url,
-                    error="403 anti-bot block",
-                    status_code=status_code,
-                    source="crawl4ai",
-                )
-
-            response.raise_for_status()
-            data = response.json()
-        except httpx.TimeoutException:
-            log.warning("Crawl4AI fetch_markdown timed out for %s", url)
-            return FetchResult(
-                success=False,
-                url=url,
-                error="timeout",
-                source="crawl4ai",
-            )
-        except httpx.HTTPStatusError as exc:
-            log.warning(
-                "Crawl4AI fetch_markdown returned HTTP %d for %s",
-                exc.response.status_code,
-                url,
-            )
-            return FetchResult(
-                success=False,
-                url=url,
-                error=f"HTTP {exc.response.status_code}",
-                markdown=exc.response.text[:2000],
-                status_code=exc.response.status_code,
-                source="crawl4ai",
-            )
-        except Exception as exc:
-            log.warning("Crawl4AI fetch_markdown failed for %s: %s", url, exc)
-            return FetchResult(
-                success=False,
-                url=url,
-                error=str(exc),
-                source="crawl4ai",
-            )
-
-        markdown = data.get("markdown", "") if isinstance(data, dict) else ""
-        title = ""
-        description = ""
-        language = ""
-        if isinstance(data, dict):
-            metadata = data.get("metadata", {})
-            if isinstance(metadata, dict):
-                title = metadata.get("title", "") or ""
-                description = metadata.get("description", "") or ""
-                language = metadata.get("language", "") or ""
-
-        return FetchResult(
-            success=True,
-            url=url,
-            markdown=markdown,
-            title=title,
-            description=description,
-            language=language,
-            status_code=status_code,
+        return await safe_fetch(
+            self._client,
+            method="POST",
+            url=f"{self._settings.CRAWL4AI_URL}/md",
             source="crawl4ai",
+            timeout=self._timeout,
+            json_body=body,
+            check_403=True,
         )

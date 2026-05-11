@@ -74,12 +74,48 @@ class ExtractionMetrics:
         self.clean_len: int = 0
 
 
+def _strip_markdown_code_blocks(text: str) -> str:
+    """Remove markdown fenced code blocks only - not indented lines.
+
+    Stripping indented lines caused false negatives on HTML detection:
+    real HTML often has 4+ space indentation, and removing those lines
+    eliminated the <html>, <head>, <body> indicators that _looks_like_html
+    needs. Only fenced blocks (triple backticks) are stripped, which removes
+    angle-bracket mentions inside code blocks while preserving real HTML.
+    """
+    lines = text.split("\n")
+    result: list[str] = []
+    in_fenced_block = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fenced_block = not in_fenced_block
+            continue
+        if in_fenced_block:
+            continue
+        result.append(line)
+    return "\n".join(result)
+
+
 def _looks_like_html(content: str) -> bool:
-    """Return True if *content* appears to be HTML rather than markdown/text."""
+    """Return True if *content* appears to be HTML rather than markdown/text.
+
+    Strips markdown fenced code blocks before checking, so <div>/<span> inside
+    ```python``` blocks don't trigger false positives.  Uses strong/weak tag
+    indicators: >= 1 strong (doctype/html/head/body) or >= 2 weak tags needed.
+    """
     if not content or len(content) < 20:
         return False
-    normalised = content.strip().lower()[:2000]
-    return any(tag in normalised for tag in _HTML_INDICATORS)
+    text = _strip_markdown_code_blocks(content)
+    normalised = text.strip().lower()[:2000]
+
+    strong = ("<!doctype html", "<html", "<head", "<body")
+    weak = ("<div", "<span", "<script", "<style", "<meta", "<link",
+            "<iframe", "<nav", "<footer", "<header", "<section",
+            "<aside", "<noscript")
+    strong_count = sum(1 for tag in strong if tag in normalised)
+    weak_count = sum(1 for tag in weak if tag in normalised)
+    return strong_count >= 1 or weak_count >= 2
 
 
 # ── Consent / cookie-dialog patterns ──────────────────────────────────

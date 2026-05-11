@@ -31,6 +31,7 @@ import httpx
 from app.config import Settings
 from app.schemas import Citation, RetrieveResponse, SourceChunk
 from app.services.fetch_chain import FetchChain
+from app.services.models import FetchResult
 from app.services.litellm_search import LiteLLMSearchClient
 from app.services.rerank_service import RerankService
 from app.services.synthesis_service import SynthesisService
@@ -235,7 +236,10 @@ class RetrieveService:
         for url_info in top_urls:
             url = url_info["url"]
             if url in prefetch_tasks:
-                # Reuse speculative prefetch — already in flight
+                # Reuse speculative prefetch — already in flight.
+                # Note: prefetch runs with skip_firebreak=True, so it may
+                # return an anti-bot block that needs the full chain.
+                # We'll check after results are collected and re-fetch if needed.
                 fetch_tasks.append(prefetch_tasks[url])
             else:
                 # Fresh fetch with BM25 content filtering
@@ -296,6 +300,34 @@ class RetrieveService:
 
             # ── Quality gates ───────────────────────────────────────
             content = result.markdown
+
+            # Anti-bot re-fetch: if this was a prefetch result (skip_firebreak=True)
+            # and it looks like an anti-bot block, re-fetch with the full chain.
+            if url_info["url"] in prefetch_tasks and result.success and _is_likely_paywall(content):
+                log.info(
+                    "Re-fetching %s with full chain (prefetch hit anti-bot/paywall)",
+                    url_info["url"],
+                )
+                try:
+                    async with asyncio.timeout(per_url_timeout):
+                        result = await self._fetch.execute(
+                            url_info["url"],
+                            aggressive_clean=True,
+                            skip_firebreak=False,
+                            content_filter=content_filter,
+                            content_query=content_query,
+                        )
+                    content = result.markdown
+                    # Re-check if the re-fetch succeeded
+                    if not result.success:
+                        log.warning("Re-fetch failed for %s: %s", url_info["url"], result.error)
+                        sources_failed += 1
+                        continue
+                except asyncio.TimeoutError:
+                    log.warning("Re-fetch timed out for %s", url_info["url"])
+                    sources_failed += 1
+                    continue
+
             if _is_too_short(content, min_content_length):
                 log.info(
                     "Skipping source %s: content too short (%d chars < %d min)",

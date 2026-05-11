@@ -12,14 +12,13 @@ import asyncio
 import json
 import logging
 import sqlite3
-import threading
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 from app.config import Settings
+from app.services.sqlite_base import SQLiteBase
 
 log = logging.getLogger(__name__)
 
@@ -69,35 +68,20 @@ class LogRecord:
     correlation_id: str = ""
 
 
-class ObservabilityStore:
+class ObservabilityStore(SQLiteBase):
     def __init__(self, settings: Settings) -> None:
+        self._db_path = str(settings.OBSERVABILITY_DB_PATH)
         self._enabled = settings.OBSERVABILITY_ENABLED
         self._retention_days = settings.OBSERVABILITY_RETENTION_DAYS
-        self._db_path = Path(settings.OBSERVABILITY_DB_PATH)
         if self._enabled:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._ensure_dirs()
             self._init_schema()
             log.info("Observability enabled: %s", self._db_path)
         else:
             log.info("Observability disabled")
 
-    # Thread-local connection — avoids open/close per operation
-    _local = threading.local()
-
-    def _get_conn(self) -> sqlite3.Connection:
-        """Get a thread-local connection, creating and initializing one if needed."""
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(str(self._db_path))
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            self._local.conn = conn
-            self._init_schema_on_conn(conn)
-        return conn
-
-    def _init_schema_on_conn(self, conn: sqlite3.Connection) -> None:
-        """Ensure schema exists on a given connection (idempotent)."""
+    def _create_schema(self, conn: sqlite3.Connection) -> None:
+        """Create request_logs table and indexes if they don't exist."""
         try:
             conn.execute(
                 """
@@ -149,9 +133,11 @@ class ObservabilityStore:
         except Exception:
             log.exception("Observability schema init failed")
 
-    def _init_schema(self) -> None:
-        """Initialize schema (calls _get_conn which handles per-conn setup)."""
-        self._get_conn()
+    def _get_conn(self) -> sqlite3.Connection:
+        """Override to add row_factory for query results."""
+        conn = super()._get_conn()
+        conn.row_factory = sqlite3.Row
+        return conn
 
     async def insert(self, record: LogRecord) -> None:
         if not self._enabled:
@@ -159,8 +145,7 @@ class ObservabilityStore:
         await asyncio.to_thread(self._insert_sync, record)
 
     def _insert_sync(self, record: LogRecord) -> None:
-        conn = self._get_conn()
-        try:
+        def _write_insert(conn: sqlite3.Connection, record: LogRecord) -> None:
             conn.execute(
                 """
                 INSERT INTO request_logs (
@@ -189,7 +174,11 @@ class ObservabilityStore:
                     record.correlation_id,
                 ),
             )
-            conn.commit()
+
+        try:
+            self._write(_write_insert, record)
+        except sqlite3.OperationalError:
+            log.warning("Observability insert failed after retries", exc_info=True)
         except Exception:
             log.warning("Observability insert failed", exc_info=True)
 
@@ -208,8 +197,10 @@ class ObservabilityStore:
             deleted = cur.rowcount
             if deleted:
                 log.info("Purged %d old observability records", deleted)
-                conn.execute("VACUUM")
+                # VACUUM can't run inside a transaction, so commit the DELETE first
                 conn.commit()
+                # VACUUM is a no-lock operation in WAL mode
+                conn.execute("VACUUM")
             return deleted
         except Exception:
             log.warning("Observability purge failed", exc_info=True)
@@ -228,8 +219,8 @@ class ObservabilityStore:
             deleted = cur.rowcount
             if deleted:
                 log.info("Cleared all %d observability records", deleted)
-                conn.execute("VACUUM")
                 conn.commit()
+                conn.execute("VACUUM")
             return deleted
         except Exception:
             log.warning("Observability delete_all failed", exc_info=True)

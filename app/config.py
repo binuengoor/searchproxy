@@ -65,7 +65,7 @@ class Settings(BaseSettings):
         description="Minimum characters of fetched content for a source to be included in synthesis.",
     )
     RETRIEVE_FETCH_TIMEOUT: float = Field(
-        default=25.0,
+        default=15.0,
         description="Timeout in seconds for the parallel fetch phase of /v1/retrieve.",
     )
     RETRIEVE_PREFETCH_DURING_RERANK: bool = Field(
@@ -123,6 +123,12 @@ class Settings(BaseSettings):
     CRAWL4AI_TIMEOUT: int = Field(default=15)
     JINA_TIMEOUT: int = Field(default=15)
     ANTIBOT_TIMEOUT: int = Field(default=45)
+
+    # --- Connect timeout (shared across all HTTP clients) ---
+    CONNECT_TIMEOUT: float = Field(
+        default=5.0,
+        description="Connect timeout in seconds for all downstream HTTP clients.",
+    )
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)

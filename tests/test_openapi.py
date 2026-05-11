@@ -13,7 +13,6 @@ OPENAPI_EXPECTED_PATHS = {
     "/health",
     "/fetch",
     "/v1/retrieve",
-    "/vane",
     "/metrics",
 }
 

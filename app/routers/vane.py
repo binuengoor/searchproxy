@@ -12,7 +12,7 @@ from app.schemas import MessageItem
 from app.services.vane_proxy import VaneProxyClient, VaneResearchResponse, VaneTimeoutError, VaneUpstreamError, VaneError
 
 log = logging.getLogger(__name__)
-router = APIRouter(prefix="", tags=["vane"])
+router = APIRouter(prefix="", tags=["vane"], include_in_schema=False)
 
 
 class VaneRequest(BaseModel):

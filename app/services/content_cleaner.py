@@ -40,26 +40,6 @@ def _strip_html_fallback(text: str) -> str:
     return text.strip()
 
 
-# Fragments that strongly indicate HTML rather than markdown / plain text.
-_HTML_INDICATORS: tuple[str, ...] = (
-    "<!doctype html",
-    "<html",
-    "<head",
-    "<body",
-    "<script",
-    "<style",
-    "<div",
-    "<span",
-    "<meta",
-    "<link",
-    "<iframe",
-    "<nav",
-    "<footer",
-    "<header",
-    "<section",
-    "<aside",
-    "<noscript",
-)
 
 # Character threshold below which we never attempt extraction — it's
 # already small enough.

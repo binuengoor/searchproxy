@@ -14,7 +14,7 @@ from starlette.responses import RedirectResponse
 
 import app.config as _config_module
 from app.clean_executor import init_executor, shutdown_executor
-from app.clients import _client as _clients_module
+import app.clients as _clients_module
 from app.observability import init_store, ObservabilityStore
 from app.middleware import request_logger as _request_logger_module
 from app.middleware.correlation import CorrelationIdMiddleware

@@ -129,7 +129,7 @@ app = FastAPI(
         "OpenAPI spec — agents should use the three primary tools above.\n\n"
         "**/metrics** — Prometheus monitoring. NOT a search tool."
     ),
-    version="0.8.0",
+    version="0.8.1",
     lifespan=lifespan,
 )
 # Force OpenAPI 3.0.3 for max client compatibility (MCPHub, Open WebUI).

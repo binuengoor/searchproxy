@@ -2,7 +2,59 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.8.1] — 2026-05-11
+
+### Performance
+
+- **Reduced synthesis prompt budget** (`app/config.py`)
+  - `RETRIEVE_MAX_TOTAL_CONTENT` 20000 → 12000 chars. Saves ~2k tokens (~40% of prompt), reduces synthesis latency by 3–5s.
+- **Capped speculative prefetch** (`app/services/retrieve_service.py`)
+  - `RETRIEVE_PREFETCH_MAX = 3` (new config var). Prevents wasted fetches on URLs that rerank may demote. Reduces downstream load per query.
+- **Dynamic per-URL fetch timeout** (`app/services/retrieve_service.py`)
+  - `max(4.0, min(10.0, batch_timeout / fetch_top_k + 2))` — no single URL starves the batch. Fair share per concurrent fetch.
+- **Replaced `asyncio.wait()` + nested `asyncio.timeout()` with `asyncio.gather()`** (`app/services/retrieve_service.py`)
+  - Eliminates task-completed race condition where pending tasks inside gather completed before wait_for checked them, causing hangs.
+
+### Fixed
+
+- **`threading.Lock()` deadlock in DI factories** (`app/dependencies.py`)
+  - Singleton factories call each other nested (e.g. `get_retrieve_service` → `get_litellm_client`). Non-reentrant `Lock()` caused the same event-loop thread to deadlock on re-acquisition. Replaced with `threading.RLock()`. Fixes pre-existing test hangs in `test_retrieve.py` and `test_search_and_fetch.py`.
+- **Dead code removal** (`app/services/content_cleaner.py`)
+  - Removed unused `_HTML_INDICATORS` constant.
+
+### Tests
+
+- 128 tests passing (up from 99). `test_retrieve.py` no longer hangs.
+
+---
+
 ## [0.8.0] — 2026-05-09
+
+### Performance
+
+- **Reduced synthesis prompt budget** ()
+  -  20000 → 12000 chars. Saves ~2k tokens (~40% of prompt), reduces synthesis latency by 3–5s.
+- **Capped speculative prefetch** ()
+  -  (new config var). Prevents wasted fetches on URLs that rerank may demote. Reduces downstream load per query.
+- **Dynamic per-URL fetch timeout** ()
+  -  — no single URL starves the batch. Fair share per concurrent fetch.
+- **Replaced  + nested  with ** ()
+  - Eliminates task-completed race condition where pending tasks inside gather completed before wait_for checked them, causing hangs.
+
+### Fixed
+
+- ** deadlock in DI factories** ()
+  - Singleton factories call each other nested (e.g.  → ). Non-reentrant  caused the same event-loop thread to deadlock on re-acquisition. Replaced with . Fixes pre-existing test hangs in  and .
+- **Dead code removal** ()
+  - Removed unused  constant.
+
+### Tests
+
+- 128 tests passing (up from 99).  no longer hangs.
+
+---
+
+ ## [0.8.0] — 2026-05-09
 
 ### Added
 

@@ -59,6 +59,28 @@
 
 ---
 
+---
+
+### v0.8.1 Patch -- Code Review Fixes (2026-05-11)
+
+- [x] Cut synthesis prompt by 40% (RETRIEVE_MAX_TOTAL_CONTENT 20000 -> 12000)
+- [x] Cap speculative prefetch at 3 URLs (RETRIEVE_PREFETCH_MAX = 3)
+- [x] Fix asyncio.wait() race -- replaced with asyncio.gather() + dynamic per-URL timeout
+- [x] Fix threading.Lock() deadlock in DI factories -> threading.RLock()
+- [x] Remove dead _HTML_INDICATORS tuple from content_cleaner.py
+- [x] 128 tests passing (was 99)
+
+---
+
+### v0.8.1 Patch -- Code Review Fixes (2026-05-11)
+
+- [x] Cut synthesis prompt by 40% (RETRIEVE_MAX_TOTAL_CONTENT 20000 -> 12000)
+- [x] Cap speculative prefetch at 3 URLs (RETRIEVE_PREFETCH_MAX = 3)
+- [x] Fix asyncio.wait() race -- replaced with asyncio.gather() + dynamic per-URL timeout
+- [x] Fix threading.Lock() deadlock in DI factories -> threading.RLock()
+- [x] Remove dead _HTML_INDICATORS tuple from content_cleaner.py
+- [x] 128 tests passing (was 99)
+
 ### Known Issues / Limitations
 
 - `/vane` with deep research queries can take 2+ minutes (Vane backend timeout, not searchproxy)

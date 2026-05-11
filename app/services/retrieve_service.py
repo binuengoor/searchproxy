@@ -227,7 +227,9 @@ class RetrieveService:
         """
         top_url_set = {u["url"] for u in top_urls}
         fetch_tasks: list[asyncio.Task] = []
-        per_url_timeout = 30.0  # Individual URL timeout (seconds)
+        # Dynamic per-URL timeout: no single URL starves the batch
+        batch_timeout = self._settings.RETRIEVE_FETCH_TIMEOUT
+        per_url_timeout = max(4.0, min(10.0, batch_timeout / max(len(top_urls), 1) + 2))
 
         # Use BM25 content filtering for aggressive clean (retrieve pipeline)
         content_filter = "bm25"
@@ -258,20 +260,28 @@ class RetrieveService:
                         )
                 fetch_tasks.append(asyncio.create_task(_fetch_one(), name=f"fetch:{url[:80]}"))
 
-        fetch_timeout = self._settings.RETRIEVE_FETCH_TIMEOUT
-        done, pending = await asyncio.wait(fetch_tasks, timeout=fetch_timeout, return_when=asyncio.ALL_COMPLETED)
-        for task in pending:
-            task.cancel()
+        # Batch timeout for all fetches; individual tasks also have per_url_timeout via asyncio.timeout inside _fetch_one()
+        try:
+            async with asyncio.timeout(batch_timeout):
+                raw_results: list[Any] = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        except asyncio.TimeoutError:
+            for t in fetch_tasks:
+                t.cancel()
+            raw_results = []
+            for t in fetch_tasks:
+                try:
+                    raw_results.append(t.result())
+                except Exception as exc:
+                    raw_results.append(exc)
 
         fetch_results: list[Any] = []
-        for task in fetch_tasks:
-            if task in done:
-                try:
-                    fetch_results.append(task.result())
-                except Exception as exc:
-                    fetch_results.append(exc)
+        for raw in raw_results:
+            if isinstance(raw, asyncio.TimeoutError):
+                fetch_results.append(asyncio.TimeoutError(f"Fetch timed out after {per_url_timeout:.1f}s"))
+            elif isinstance(raw, Exception):
+                fetch_results.append(raw)
             else:
-                fetch_results.append(asyncio.TimeoutError(f"Fetch timed out after {fetch_timeout}s"))
+                fetch_results.append(raw)
 
         # Cancel any prefetch tasks that weren't selected by rerank
         for url, task in prefetch_tasks.items():
@@ -425,7 +435,7 @@ class RetrieveService:
         # Start fetching top search results during rerank to overlap latency.
         prefetch_tasks: dict[str, asyncio.Task] = {}
         if self._settings.RETRIEVE_PREFETCH_DURING_RERANK:
-            prefetch_count = min(fetch_top_k, len(deduped))
+            prefetch_count = min(self._settings.RETRIEVE_PREFETCH_MAX, fetch_top_k, len(deduped))
             for i in range(prefetch_count):
                 url = deduped[i]["url"]
                 # Prefetch skips paid anti-bot services — only free tiers (Crawl4AI, Jina)

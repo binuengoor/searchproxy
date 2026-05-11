@@ -53,7 +53,7 @@ class Settings(BaseSettings):
         description="Max characters of fetched content per source for synthesis.",
     )
     RETRIEVE_MAX_TOTAL_CONTENT: int = Field(
-        default=20000,
+        default=12000,
         description="Max total characters across all sources for synthesis prompt.",
     )
     RETRIEVE_RERANK_TOP_K: int = Field(
@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     RETRIEVE_PREFETCH_DURING_RERANK: bool = Field(
         default=True,
         description="Speculatively start fetching top search results during rerank to overlap latency.",
+    )
+    RETRIEVE_PREFETCH_MAX: int = Field(
+        default=3,
+        description="Max number of URLs to speculatively prefetch during rerank. Caps wasted fetches when fetch_top_k > 3.",
     )
     SYNTHESIS_MAX_TOKENS: int = Field(
         default=2048,

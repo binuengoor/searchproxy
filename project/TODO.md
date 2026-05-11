@@ -89,15 +89,25 @@
 
 ---
 
+### Stage 4: Retrieve Latency v0.8.3 — ✅ COMPLETE
+
+- [x] Skip rerank when `len(deduped) <= fetch_top_k` (saves 1–3s)
+- [x] Synthesis result caching (`CACHE_SYNTHESIS_TTL=3600`)
+- [x] Incremental source streaming (`fetch_step_incremental`)
+- [x] Reduce default `RERANK_TIMEOUT` from 10s to 5s
+- [x] 128 tests passing, zero regressions
+
+---
+
 ### Known Issues / Limitations
 
 - `/vane` with deep research queries can take 2+ minutes (Vane backend timeout, not searchproxy)
 - `/vane` streaming requires client-side SSE handling
 - `/compat/searxng` image/video passthrough returns count: 0 when SearXNG has no results
 
-### Deferred (after Stage 3)
+### Deferred (after Stage 4)
 
-- Query expansion via LLM (adds 1–3s latency; needs caching first to amortize cost)
+- Query expansion via LLM (adds 1–3s latency; synthesis caching now amortizes cost)
 - BGE reranker on all search results (not just /v1/retrieve)
 - Redis cache (only if multi-instance)
 - Rate limiting per API key

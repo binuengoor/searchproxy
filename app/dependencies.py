@@ -94,6 +94,7 @@ def get_retrieve_service() -> RetrieveService:
                     rerank_service=get_rerank_service(),
                     synthesis_service=get_synthesis_service(),
                     settings=settings,
+                    cache=_get_cache(),
                 )
     return _retrieve_service
 

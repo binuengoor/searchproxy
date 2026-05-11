@@ -2,6 +2,24 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.8.3] — 2026-05-11
+
+### Performance
+
+- **Skip rerank for small result sets** (`app/services/retrieve_steps.py`)
+  - When `len(deduped) <= fetch_top_k`, the BGE reranker is skipped entirely. Saves 1–3s of pure overhead when all results are fetched anyway.
+- **Synthesis result caching** (`app/services/cache.py`, `app/services/retrieve_service.py`)
+  - New `CACHE_SYNTHESIS_TTL=3600`. Identical queries that resolve to the same source URLs return the cached LLM answer instantly, bypassing the expensive synthesis call.
+- **Incremental source streaming** (`app/services/retrieve_service.py`, `app/services/retrieve_steps.py`)
+  - `retrieve_stream` now emits `event: source` as each individual fetch completes rather than waiting for the entire batch. Dramatically improves perceived latency for streaming clients.
+- **Reduce default rerank timeout to 5s** (`app/config.py`)
+  - `RERANK_TIMEOUT` changed from `10.0` to `5.0`. Falls back to original search order faster when the upstream reranker is slow.
+
+### Refactored
+
+- **Extract `_process_fetch_result` and `_refetch_anti_bot`** (`app/services/retrieve_steps.py`)
+  - Per-result quality gates (paywall, too-short, anti-bot re-fetch) are now pure helpers shared by both batch (`fetch_step`) and incremental (`fetch_step_incremental`) modes.
+
 ## [0.8.2] — 2026-05-11
 
 ### Performance

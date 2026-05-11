@@ -1,6 +1,6 @@
 # SearchProxy Strategic Roadmap
 
-> **Current version:** 0.8.2  
+> **Current version:** 0.8.3  
 > **Theme:** From "search metadata relay" to "Perplexity-grade synthesis gateway"
 
 ---

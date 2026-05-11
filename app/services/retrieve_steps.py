@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
 from fastapi import Request
@@ -116,6 +117,15 @@ async def rerank_step(
     rerank_service: RerankService,
     settings: Settings,
 ) -> tuple[list[int], dict[int, float]]:
+    # Fast path: if we are fetching all deduped results anyway, skip the
+    # reranker entirely. Saves 1-3s of pure overhead.
+    if len(deduped) <= fetch_top_k:
+        log.info(
+            "Retrieve pipeline: skipping rerank (%d results <= fetch_top_k=%d)",
+            len(deduped), fetch_top_k,
+        )
+        return list(range(len(deduped))), {}
+
     rerank_docs = [
         f"{d['title']}: {d['snippet']}" if d["title"] else d["snippet"]
         for d in deduped
@@ -129,6 +139,80 @@ async def rerank_step(
         return reranked_indices, score_map
     log.info("Retrieve pipeline: reranker unavailable, using original order")
     return list(range(len(deduped))), {}
+
+
+def _process_fetch_result(
+    url_info: dict[str, str],
+    result: Any,
+    prefetch_tasks: dict[str, asyncio.Task],
+    seen_keys: dict[str, int],
+    score_map: dict[int, float],
+    settings: Settings,
+) -> tuple[SourceChunk | None, int, int]:
+    """Apply quality gates to a single fetch result. Returns (source, failed, skipped)."""
+    min_content_length = settings.RETRIEVE_MIN_CONTENT_LENGTH
+
+    if isinstance(result, Exception):
+        log.warning("Fetch exception for %s: %s", url_info["url"], result)
+        return None, 1, 0
+    if not result.success:
+        log.warning("Fetch failed for %s: %s", url_info["url"], result.error)
+        return None, 1, 0
+
+    content = result.markdown
+
+    if url_info["url"] in prefetch_tasks and _is_anti_bot_block(result.status_code, content):
+        # Signal caller that a re-fetch is needed
+        return None, 0, 0
+
+    if is_too_short(content, min_content_length):
+        log.info("Skipping source %s: content too short (%d chars < %d min)", url_info["url"], len(content), min_content_length)
+        return None, 0, 1
+    if is_likely_paywall(content):
+        log.info("Skipping source %s: detected paywall/login wall", url_info["url"])
+        return None, 0, 1
+
+    original_idx = seen_keys.get(canonical_key(url_info["url"]))
+    relevance_score = score_map.get(original_idx) if original_idx is not None else None
+    content = truncate_content(content, settings.RETRIEVE_MAX_CONTENT_PER_SOURCE)
+
+    source = SourceChunk(
+        url=url_info["url"],
+        title=result.title or url_info["title"],
+        content=content,
+        fetch_tier=result.source or None,
+        content_length=len(content),
+        relevance_score=relevance_score,
+        fetch_time_ms=result.fetch_time_ms,
+    )
+    return source, 0, 0
+
+
+async def _refetch_anti_bot(
+    url: str,
+    fetch_chain: FetchChain,
+    per_url_timeout: float,
+    content_filter: str | None,
+    content_query: str | None,
+) -> FetchResult | None:
+    """Re-fetch a URL with the full chain (including anti-bot) after a prefetch anti-bot block."""
+    log.info("Re-fetching %s with full chain (prefetch hit anti-bot block)", url)
+    try:
+        async with asyncio.timeout(per_url_timeout):
+            result = await fetch_chain.execute(
+                url,
+                aggressive_clean=True,
+                skip_firebreak=False,
+                content_filter=content_filter,
+                content_query=content_query,
+            )
+        if not result.success:
+            log.warning("Re-fetch failed for %s: %s", url, result.error)
+            return None
+        return result
+    except asyncio.TimeoutError:
+        log.warning("Re-fetch timed out for %s", url)
+        return None
 
 
 async def fetch_step(
@@ -196,63 +280,26 @@ async def fetch_step(
     sources: list[SourceChunk] = []
     sources_failed = 0
     sources_skipped_quality = 0
-    min_content_length = settings.RETRIEVE_MIN_CONTENT_LENGTH
 
     for url_info, result in zip(top_urls, fetch_results):
-        if isinstance(result, Exception):
-            log.warning("Fetch exception for %s: %s", url_info["url"], result)
-            sources_failed += 1
-            continue
-        if not result.success:
-            log.warning("Fetch failed for %s: %s", url_info["url"], result.error)
-            sources_failed += 1
-            continue
-
-        content = result.markdown
-
-        if url_info["url"] in prefetch_tasks and result.success and _is_anti_bot_block(result.status_code, content):
-            log.info("Re-fetching %s with full chain (prefetch hit anti-bot block)", url_info["url"])
-            try:
-                async with asyncio.timeout(per_url_timeout):
-                    result = await fetch_chain.execute(
-                        url_info["url"],
-                        aggressive_clean=True,
-                        skip_firebreak=False,
-                        content_filter=content_filter,
-                        content_query=content_query,
-                    )
-                content = result.markdown
-                if not result.success:
-                    log.warning("Re-fetch failed for %s: %s", url_info["url"], result.error)
-                    sources_failed += 1
-                    continue
-            except asyncio.TimeoutError:
-                log.warning("Re-fetch timed out for %s", url_info["url"])
-                sources_failed += 1
-                continue
-
-        if is_too_short(content, min_content_length):
-            log.info("Skipping source %s: content too short (%d chars < %d min)", url_info["url"], len(content), min_content_length)
-            sources_skipped_quality += 1
-            continue
-        if is_likely_paywall(content):
-            log.info("Skipping source %s: detected paywall/login wall", url_info["url"])
-            sources_skipped_quality += 1
-            continue
-
-        original_idx = seen_keys.get(canonical_key(url_info["url"]))
-        relevance_score = score_map.get(original_idx) if original_idx is not None else None
-        content = truncate_content(content, settings.RETRIEVE_MAX_CONTENT_PER_SOURCE)
-
-        sources.append(SourceChunk(
-            url=url_info["url"],
-            title=result.title or url_info["title"],
-            content=content,
-            fetch_tier=result.source or None,
-            content_length=len(content),
-            relevance_score=relevance_score,
-            fetch_time_ms=result.fetch_time_ms,
-        ))
+        src, failed, skipped = _process_fetch_result(
+            url_info, result, prefetch_tasks, seen_keys, score_map, settings,
+        )
+        # Handle anti-bot re-fetch for prefetch hits
+        if src is None and failed == 0 and skipped == 0 and url_info["url"] in prefetch_tasks:
+            refetch = await _refetch_anti_bot(
+                url_info["url"], fetch_chain, per_url_timeout, content_filter, content_query,
+            )
+            if refetch is not None:
+                src, failed, skipped = _process_fetch_result(
+                    url_info, refetch, {}, seen_keys, score_map, settings,
+                )
+            else:
+                failed = 1
+        sources_failed += failed
+        sources_skipped_quality += skipped
+        if src is not None:
+            sources.append(src)
 
     sources_fetched = len(sources)
     log.info(
@@ -260,6 +307,102 @@ async def fetch_step(
         sources_fetched, len(top_urls), sources_failed, sources_skipped_quality,
     )
     return sources, sources_fetched, sources_failed, sources_skipped_quality
+
+
+async def fetch_step_incremental(
+    top_urls: list[dict[str, str]],
+    seen_keys: dict[str, int],
+    score_map: dict[int, float],
+    prefetch_tasks: dict[str, asyncio.Task],
+    query: str,
+    fetch_chain: FetchChain,
+    settings: Settings,
+) -> AsyncIterator[tuple[SourceChunk | None, int, int]]:
+    """Fetch URLs and yield results incrementally as each one completes.
+
+    Yields (source, failed_increment, skipped_increment) for every completed
+    fetch so the caller can stream source events to the client immediately.
+    Anti-bot re-fetches are handled inline before yielding.
+    """
+    top_url_set = {u["url"] for u in top_urls}
+    batch_timeout = settings.RETRIEVE_FETCH_TIMEOUT
+    per_url_timeout = max(4.0, min(10.0, batch_timeout / max(len(top_urls), 1) + 2))
+    content_filter = "bm25"
+    content_query = query
+
+    # Track pending tasks with their URL so we never have to guess which
+    # result belongs to which URL after completion.
+    pending: dict[asyncio.Task, str] = {}
+
+    for url_info in top_urls:
+        url = url_info["url"]
+        if url in prefetch_tasks:
+            pending[prefetch_tasks[url]] = url
+        else:
+            async def _fetch_one(
+                u: str = url,
+                cf: str | None = content_filter,
+                cq: str | None = content_query,
+            ) -> FetchResult:
+                async with asyncio.timeout(per_url_timeout):
+                    return await fetch_chain.execute(
+                        u,
+                        aggressive_clean=True,
+                        skip_firebreak=False,
+                        content_filter=cf,
+                        content_query=cq,
+                    )
+            task = asyncio.create_task(_fetch_one(), name=f"fetch:{url[:80]}")
+            pending[task] = url
+
+    # Cancel unused prefetches
+    for url, task in prefetch_tasks.items():
+        if url not in top_url_set:
+            task.cancel()
+
+    url_map = {u["url"]: u for u in top_urls}
+
+    try:
+        while pending:
+            done, _ = await asyncio.wait(
+                pending.keys(), return_when=asyncio.FIRST_COMPLETED, timeout=batch_timeout,
+            )
+            if not done:
+                # Timeout on the whole batch: cancel everything remaining
+                for task in list(pending.keys()):
+                    task.cancel()
+                    yield None, 1, 0
+                break
+
+            for task in done:
+                url = pending.pop(task)
+                try:
+                    result = task.result()
+                except asyncio.TimeoutError:
+                    result = asyncio.TimeoutError(f"Fetch timed out after {per_url_timeout:.1f}s")
+                except Exception as exc:
+                    result = exc
+
+                url_info = url_map[url]
+                src, failed, skipped = _process_fetch_result(
+                    url_info, result, prefetch_tasks, seen_keys, score_map, settings,
+                )
+                # Anti-bot re-fetch for prefetch hits
+                if src is None and failed == 0 and skipped == 0 and url in prefetch_tasks:
+                    refetch = await _refetch_anti_bot(
+                        url, fetch_chain, per_url_timeout, content_filter, content_query,
+                    )
+                    if refetch is not None:
+                        src, failed, skipped = _process_fetch_result(
+                            url_info, refetch, {}, seen_keys, score_map, settings,
+                        )
+                    else:
+                        failed = 1
+                yield src, failed, skipped
+    except asyncio.TimeoutError:
+        for task in list(pending.keys()):
+            task.cancel()
+            yield None, 1, 0
 
 
 def budget_step(sources: list[SourceChunk], settings: Settings) -> list[SourceChunk]:

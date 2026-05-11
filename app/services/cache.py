@@ -40,12 +40,13 @@ class CacheService(SQLiteBase):
         self._search_ttl = settings.CACHE_SEARCH_TTL
         self._fetch_ttl = settings.CACHE_FETCH_TTL
         self._rerank_ttl = settings.CACHE_RERANK_TTL
+        self._synthesis_ttl = settings.CACHE_SYNTHESIS_TTL
 
         if self._enabled:
             Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
             # Initialize schema on the main thread connection
             self._ensure_schema()
-            log.info("Cache enabled: %s (search_ttl=%ds, fetch_ttl=%ds, rerank_ttl=%ds)", self._db_path, self._search_ttl, self._fetch_ttl, self._rerank_ttl)
+            log.info("Cache enabled: %s (search_ttl=%ds, fetch_ttl=%ds, rerank_ttl=%ds, synthesis_ttl=%ds)", self._db_path, self._search_ttl, self._fetch_ttl, self._rerank_ttl, self._synthesis_ttl)
         else:
             log.info("Cache disabled")
 
@@ -133,6 +134,20 @@ class CacheService(SQLiteBase):
         key = self._rerank_key(query, documents)
         await asyncio.to_thread(self._set_sync, key, value, self._rerank_ttl)
 
+    async def get_synthesize(self, query: str, sources: list[dict[str, Any]]) -> Any | None:
+        """Get cached synthesis result (answer + citations JSON)."""
+        if not self._enabled:
+            return None
+        key = self._synthesis_key(query, sources)
+        return await asyncio.to_thread(self._get_sync, key)
+
+    async def set_synthesize(self, query: str, sources: list[dict[str, Any]], value: Any) -> None:
+        """Cache a synthesis result."""
+        if not self._enabled:
+            return
+        key = self._synthesis_key(query, sources)
+        await asyncio.to_thread(self._set_sync, key, value, self._synthesis_ttl)
+
     async def invalidate(self, key: str) -> None:
         """Remove a single key from cache."""
         if not self._enabled:
@@ -179,6 +194,23 @@ class CacheService(SQLiteBase):
         doc_fingerprints = "|".join(documents)
         digest = hashlib.sha256(f"rerank:{normalized_query}:{doc_fingerprints}".encode()).hexdigest()[:16]
         return f"rerank:{digest}"
+
+    @staticmethod
+    def _synthesis_key(query: str, sources: list[dict[str, Any]]) -> str:
+        """Build a deterministic cache key from query + source URLs.
+
+        The synthesis answer depends on the query and which sources were
+        fetched. We key by query + sorted source URLs; fetch caching
+        ensures the same URL returns consistent content within its TTL.
+        """
+        normalized_query = " ".join(query.strip().lower().split())
+        source_fingerprint = "|".join(
+            sorted(s.get("url", "") for s in sources)
+        )
+        digest = hashlib.sha256(
+            f"synth:{normalized_query}:{source_fingerprint}".encode()
+        ).hexdigest()[:16]
+        return f"synth:{digest}"
 
     # ------------------------------------------------------------------
     # Synchronous SQLite internals (run via asyncio.to_thread)

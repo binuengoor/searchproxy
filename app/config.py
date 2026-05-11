@@ -47,7 +47,7 @@ class Settings(BaseSettings):
         description="Model identifier for cf-inference reranker.",
     )
     RERANK_TIMEOUT: float = Field(
-        default=10.0,
+        default=5.0,
         description="Timeout in seconds for the BGE reranker call.",
     )
     CF_RERANK_API_KEY: str | None = Field(
@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     CACHE_SEARCH_TTL: int = Field(default=300, description="TTL for search cache entries in seconds.")
     CACHE_FETCH_TTL: int = Field(default=86400, description="TTL for fetch cache entries in seconds.")
     CACHE_RERANK_TTL: int = Field(default=300, description="TTL for rerank cache entries in seconds.")
+    CACHE_SYNTHESIS_TTL: int = Field(default=3600, description="TTL for synthesized answer cache entries in seconds.")
     CACHE_DB_PATH: str = Field(default="/data/cache.db", description="Path to SQLite cache database.")
 
     # --- Vane deep research ---

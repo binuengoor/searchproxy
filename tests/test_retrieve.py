@@ -425,12 +425,17 @@ async def test_retrieve_source_metadata_enrichment(
     src = data["sources"][0]
     assert src["fetch_tier"] == "crawl4ai"
     assert src["content_length"] == len(mock_fetch.return_value.markdown)
-    assert src["relevance_score"] == 0.92
+    # Rerank is skipped when deduped results <= fetch_top_k, so no score
+    assert src["relevance_score"] is None
     assert src["fetch_time_ms"] == 1240.5
 
     assert len(data["citations"]) == 1
     cit = data["citations"][0]
+    # Citation relevance comes from synthesis service; source score is None
+    # because rerank was skipped (only 1 result <= fetch_top_k=5)
     assert cit["relevance_score"] == 0.92
+    # Verify rerank was skipped due to small result set
+    mock_rerank.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -462,12 +467,15 @@ async def test_retrieve_no_synthesize_returns_metadata(
     src = data["sources"][0]
     assert src["fetch_tier"] == "jina"
     assert src["content_length"] == len(mock_fetch.return_value.markdown)
-    assert src["relevance_score"] == 0.88
+    # Rerank skipped (1 result <= fetch_top_k=5), so no relevance_score
+    assert src["relevance_score"] is None
     assert src["fetch_time_ms"] == 850.0
 
     assert len(data["citations"]) == 1
     cit = data["citations"][0]
-    assert cit["relevance_score"] == 0.88
+    # Citation relevance mirrors source score (None because rerank was skipped)
+    assert cit["relevance_score"] is None
+    mock_rerank.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -504,12 +512,13 @@ async def test_retrieve_streaming_success(
     assert "event: source" in body
     assert "event: token" in body
     assert "event: done" in body
-    # Meta should contain query and counts
+    # Meta is emitted early (before fetches complete); query is present
     assert "stream test" in body
-    assert '"sources_fetched": 1' in body
     # Source event should contain metadata
     assert "crawl4ai" in body
-    assert "0.91" in body
+    # Rerank skipped (1 result <= fetch_top_k), so no relevance_score in source
+    assert '"relevance_score": null' in body
+    mock_rerank.assert_not_called()
 
 
 @pytest.mark.anyio

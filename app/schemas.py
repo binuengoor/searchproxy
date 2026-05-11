@@ -80,7 +80,7 @@ class RetrieveRequest(BaseModel):
     )
     stream: bool = Field(
         default=False,
-        description="If true, return an SSE stream. Only applies when synthesize=true. Search/rerank/fetch still happen synchronously; only the LLM synthesis phase streams tokens.",
+        description="If true, return an SSE stream with source metadata arriving progressively as fetches complete, followed by real-time LLM synthesis tokens. Requires synthesize=true.",
     )
 
 

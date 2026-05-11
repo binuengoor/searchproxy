@@ -17,31 +17,30 @@ router = APIRouter(tags=["retrieve"])
 
 
 RETRIEVE_DESCRIPTION = """\
-One-shot research endpoint: search → rerank → fetch → synthesize.
+Search the web and return a cited, synthesized answer.
 
-Use this when you need a **cited, factual answer** from the web — not just 
-links or snippets, but a synthesized response that cross-references multiple 
-sources with inline [N] citations.
+The primary and recommended search tool for any question needing current,
+sourced information. Works in one shot: searches, reranks for relevance,
+fetches the top sources, and synthesizes a concise answer with inline [N]
+citations and source URLs.
 
-**When to choose this endpoint:**
-- User asks a question that requires looking up current information and getting
-  an accurate, sourced answer — e.g. "What is the latest on X?", "Compare A vs B"
-- You need sources cited inline in the answer, not just a list of links
-- You want faster (5–15s) results than deep research but more depth than a 
-  simple search
+**What it handles well:**
+- Factual questions ("What is the latest on X?", "When did Y happen?")
+- Comparisons ("Compare A vs B")
+- Research topics ("What do experts say about X?")
+- Any question where you need a cited answer, not just links
 
-**When NOT to use this endpoint:**
-- For quick factual lookups (a single fact, definition, or spelling) — use 
-  `/compat/perplexity` instead (faster, returns snippets)
-- For deep, multi-source analytical research (literature reviews, comprehensive
-  reports) — use `/vane` instead (slower, produces a full report)
-- To read a specific URL the user already has — use `/fetch` instead
+**Latency:** 5–15s for typical queries.
 
-**Pipeline:** LiteLLM search → BGE rerank → Crawl4AI/Jina/anti-bot fetch → 
-LLM synthesis with citation prompt.
+**Streaming:** Set ``stream: true`` to receive source metadata progressively
+as each fetch completes, followed by real-time LLM synthesis tokens.
 
-**Streaming:** Set `stream: true` to receive the LLM synthesis as SSE tokens.
-Search/rerank/fetch phases are still synchronous; only synthesis streams.
+**Parameters:**
+- ``max_results``: Search result pool size (default 10, max 50)
+- ``fetch_top_k``: How many results to fetch content from (default 5, max 10).
+  Use lower values (2–3) for quick lookups, higher (8–10) for thorough research
+- ``synthesize``: Set to ``false`` to skip LLM synthesis and get raw source chunks
+- ``stream``: Set to ``true`` for SSE streaming (incremental source events + tokens)
 """
 
 @router.post(

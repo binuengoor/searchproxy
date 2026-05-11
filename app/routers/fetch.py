@@ -44,9 +44,7 @@ Crawl4AI (headless browser) first, then Jina Reader, then anti-bot fallbacks
 - You want to verify or quote a specific source
 
 **When NOT to use this endpoint:**
-- For searching the web without a specific URL — use `/compat/perplexity`
-- For research that requires synthesizing multiple sources — use `/v1/retrieve`
-- For deep, multi-source reports — use `/vane`
+- For searching the web or researching topics — use ``/v1/retrieve`` instead
 """
 
 @router.post(

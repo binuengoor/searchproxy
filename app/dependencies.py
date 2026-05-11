@@ -21,7 +21,7 @@ from app.services.searxng_compat import SearxngCompatService
 from app.services.synthesis_service import SynthesisService
 from app.services.vane_proxy import VaneProxyClient
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 _cache_service: CacheService | None = None
 _fetch_chain: FetchChain | None = None
 _litellm_client: LiteLLMSearchClient | None = None

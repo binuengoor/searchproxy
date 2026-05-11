@@ -362,28 +362,28 @@ class TestParagraphBoundaryTruncation:
     """Paragraph-boundary-aware truncation in _truncate_content."""
 
     def test_no_truncation_when_under_limit(self) -> None:
-        from app.services.retrieve_service import _truncate_content
+        from app.services.retrieve_steps import truncate_content
         content = "Short content."
-        assert _truncate_content(content, 100) == content
+        assert truncate_content(content, 100) == content
 
     def test_truncates_at_paragraph_boundary(self) -> None:
-        from app.services.retrieve_service import _truncate_content
+        from app.services.retrieve_steps import truncate_content
         content = "Para one\n\nPara two\n\nPara three\n\nPara four"
-        result = _truncate_content(content, 25)
+        result = truncate_content(content, 25)
         # Should cut at a paragraph boundary, not mid-word
         assert result.endswith("Para two")
         assert "Para three" not in result
 
     def test_falls_back_to_sentence_boundary(self) -> None:
-        from app.services.retrieve_service import _truncate_content
+        from app.services.retrieve_steps import truncate_content
         content = "First sentence. Second sentence. Third sentence. Fourth sentence."
-        result = _truncate_content(content, 35)
+        result = truncate_content(content, 35)
         # Should end at a sentence boundary
         assert result.endswith(".")
         assert "Fourth" not in result
 
     def test_hard_cut_when_no_good_boundary(self) -> None:
-        from app.services.retrieve_service import _truncate_content
+        from app.services.retrieve_steps import truncate_content
         content = "abcdefghijklmnopqrstuvwxyz"
-        result = _truncate_content(content, 10)
+        result = truncate_content(content, 10)
         assert len(result) <= 10

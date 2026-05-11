@@ -38,7 +38,7 @@ _STREAMING_CONTENT_TYPES = frozenset({
 
 
 def _derive_source(path: str, response_body: str) -> str:
-    if path in ("/fetch", "/compat/firecrawl/scrape"):
+    if path in ("/fetch", "/compat/firecrawl/v2/scrape"):
         try:
             data = _json.loads(response_body)
             return data.get("source", "")

@@ -13,6 +13,8 @@ from pydantic import BaseModel
 from starlette.responses import RedirectResponse
 
 import app.config as _config_module
+from app.clean_executor import init_executor, shutdown_executor
+from app.clients import _client as _clients_module
 from app.observability import init_store, ObservabilityStore
 from app.middleware import request_logger as _request_logger_module
 from app.middleware.correlation import CorrelationIdMiddleware
@@ -27,17 +29,7 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
-# Module-level shared client, initialized in lifespan
-_client: httpx.AsyncClient | None = None
-
 log = logging.getLogger(__name__)
-
-
-def get_client() -> httpx.AsyncClient:
-    """Return the shared httpx client. Raises if called before startup."""
-    if _client is None:
-        raise RuntimeError("httpx client not initialized")
-    return _client
 
 
 async def _purge_loop(store: ObservabilityStore) -> None:
@@ -53,8 +45,6 @@ async def _purge_loop(store: ObservabilityStore) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage httpx client lifecycle across startup/shutdown."""
-    global _client
-
     # --- Logging setup ---
     log_level = getattr(logging, _config_module.settings.LOG_LEVEL.upper(), logging.INFO)
     root_logger = logging.getLogger()
@@ -76,12 +66,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     root_logger.addHandler(handler)
 
     log.info("Starting searchproxy (log_format=%s)", _config_module.settings.LOG_FORMAT)
-    _client = httpx.AsyncClient(
+    _clients_module._client = httpx.AsyncClient(
         timeout=httpx.Timeout(60.0),  # fallback; all services override with their own timeouts
         follow_redirects=True,
         limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
         http2=True,
     )
+    # --- Dedicated thread pool for content cleaning ---
+    init_executor(max_workers=16)
     # --- Observability ---
     from app.routers.logs import router as logs_router  # avoid circular import
     app.include_router(logs_router)
@@ -101,15 +93,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     log.info("Shutting down searchproxy")
+    shutdown_executor()
     if _purge_task is not None:
         _purge_task.cancel()
         try:
             await _purge_task
         except asyncio.CancelledError:
             pass
-    if _client is not None:
-        await _client.aclose()
-        _client = None
+    if _clients_module._client is not None:
+        await _clients_module._client.aclose()
+        _clients_module._client = None
 
 
 app = FastAPI(

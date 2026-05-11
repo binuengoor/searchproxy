@@ -8,6 +8,7 @@ unless *aggressive* mode is enabled.
 
 from __future__ import annotations
 
+import html
 import logging
 
 import re
@@ -32,9 +33,8 @@ def _strip_html_fallback(text: str) -> str:
     text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.IGNORECASE | re.DOTALL)
     # Remove all remaining HTML tags
     text = _TAG_RE.sub('', text)
-    # Decode common HTML entities
-    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-    text = text.replace('&nbsp;', ' ').replace('&#39;', "'").replace('&quot;', '"')
+    # Decode HTML entities
+    text = html.unescape(text)
     # Collapse excessive whitespace
     text = _WS_RE.sub('\n', text)
     return text.strip()
@@ -44,6 +44,10 @@ def _strip_html_fallback(text: str) -> str:
 # Character threshold below which we never attempt extraction — it's
 # already small enough.
 _CLEANUP_THRESHOLD: int = 256
+
+# Max raw input to send to trafilatura / regex cleaners. Prevents CPU
+# spikes on huge pages that would block the thread pool.
+_MAX_CLEAN_INPUT: int = 200_000
 
 
 class ExtractionMetrics:
@@ -316,6 +320,13 @@ def clean_content(raw: str, url: str = "", aggressive: bool = False) -> str:
     """
     if not raw:
         return ""
+
+    if len(raw) > _MAX_CLEAN_INPUT:
+        log.warning(
+            "Truncated %s to %d chars before cleaning",
+            url, _MAX_CLEAN_INPUT,
+        )
+        raw = raw[:_MAX_CLEAN_INPUT]
 
     if len(raw) < _CLEANUP_THRESHOLD and not _looks_like_html(raw):
         if not aggressive:

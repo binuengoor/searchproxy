@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import threading
 
+from app.clients import get_client
 from app.config import settings
-from app.main import get_client
 from app.services.cache import CacheService
 from app.services.fetch_chain import FetchChain
 from app.services.litellm_search import LiteLLMSearchClient

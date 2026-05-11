@@ -1,6 +1,6 @@
 # SearchProxy Strategic Roadmap
 
-> **Current version:** 0.8.1  
+> **Current version:** 0.8.2  
 > **Theme:** From "search metadata relay" to "Perplexity-grade synthesis gateway"
 
 ---
@@ -87,6 +87,8 @@ Compat bridges (hidden from OpenAPI, still functional): `/compat/perplexity`, `/
 | 2026-05-09 | Crawl4AI gets a single transient retry on 5xx/timeout before falling through to Jina. Jina can't render JS — retrying Crawl4AI first avoids degrading SPA pages. |
 | 2026-05-09 | v0.8.0 ships with 99 tests. Test count grew from 78 to 99 (+21). `test_cache.py` added 10 cache-specific tests. |
 | 2026-05-09 | CI/CD deferred to Stage 4 — it is the highest priority next because every project needs automated test+build, and manual docker builds are already getting tedious. |
+| 2026-05-11 | v0.8.1 patch: cut synthesis prompt budget, capped speculative prefetch, fixed asyncio.wait() race, fixed threading.Lock() deadlock in DI. 128 tests passing. |
+| 2026-05-11 | v0.8.2: full code review implementation — dynamic max_tokens, dedicated clean thread pool, client disconnect detection, split retrieve_service.py, moved client lifecycle to app/clients.py. Zero test regressions. |
 
 ---
 

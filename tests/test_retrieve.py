@@ -238,7 +238,7 @@ async def test_retrieve_missing_query(client: AsyncClient):
 @pytest.mark.anyio
 async def test_retrieve_dedup_by_canonical_url():
     """Duplicate URLs (different scheme/www) should be deduplicated."""
-    from app.services.retrieve_service import _canonical_key
+    from app.services.retrieve_steps import canonical_key as _canonical_key
 
     assert _canonical_key("https://apple.com/m3") == _canonical_key("http://www.apple.com/m3")
     assert _canonical_key("https://example.com/path/") == _canonical_key("https://example.com/path")

@@ -46,6 +46,18 @@ class Settings(BaseSettings):
         default="@cf/baai/bge-reranker-base",
         description="Model identifier for cf-inference reranker.",
     )
+    RERANK_TIMEOUT: float = Field(
+        default=10.0,
+        description="Timeout in seconds for the BGE reranker call.",
+    )
+    CF_RERANK_API_KEY: str | None = Field(
+        default=None,
+        description="API key for cf-inference reranker. Omit if the endpoint is open.",
+    )
+    CF_RERANK_MODEL: str = Field(
+        default="@cf/baai/bge-reranker-base",
+        description="Model identifier for cf-inference reranker.",
+    )
 
     # --- Retrieve: tuning ---
     RETRIEVE_MAX_CONTENT_PER_SOURCE: int = Field(
@@ -79,6 +91,10 @@ class Settings(BaseSettings):
     SYNTHESIS_MAX_TOKENS: int = Field(
         default=2048,
         description="Max tokens for the LLM synthesis response.",
+    )
+    SYNTHESIS_TIMEOUT: float = Field(
+        default=60.0,
+        description="Timeout in seconds for LLM synthesis calls.",
     )
 
     # --- Caching ---

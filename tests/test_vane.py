@@ -38,7 +38,7 @@ async def client(mock_vane_client, monkeypatch):
     import httpx
 
     _real_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
-    monkeypatch.setattr("app.main._client", _real_client)
+    monkeypatch.setattr("app.clients._client", _real_client)
 
     fastapi_app.dependency_overrides[get_vane_client] = lambda: mock_vane_client
 

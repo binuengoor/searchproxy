@@ -10,6 +10,7 @@ import time
 import httpx
 from pydantic import BaseModel, Field
 
+from app.clean_executor import get_executor
 from app.config import Settings
 from app.services.content_cleaner import clean_content
 from app.services.models import FetchResult
@@ -168,7 +169,10 @@ class FetchChain:
                 return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
             log.info("Crawl4AI succeeded for %s", url)
             get_collector().inc_tier("crawl4ai", "success")
-            result.markdown = await asyncio.to_thread(clean_content, result.markdown, url, aggressive_clean)
+            loop = asyncio.get_running_loop()
+            result.markdown = await loop.run_in_executor(
+                get_executor(), clean_content, result.markdown, url, aggressive_clean,
+            )
             result.fetch_time_ms = self._elapsed_ms(start_time)
             await self._store_fetch(url, result)
             return result
@@ -205,7 +209,10 @@ class FetchChain:
                 return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
             log.info("Jina Reader succeeded for %s", url)
             get_collector().inc_tier("jina", "success")
-            jina_result.markdown = await asyncio.to_thread(clean_content, jina_result.markdown, url, aggressive_clean)
+            loop = asyncio.get_running_loop()
+            jina_result.markdown = await loop.run_in_executor(
+                get_executor(), clean_content, jina_result.markdown, url, aggressive_clean,
+            )
             jina_result.fetch_time_ms = self._elapsed_ms(start_time)
             await self._store_fetch(url, jina_result)
             return jina_result
@@ -286,11 +293,10 @@ class FetchChain:
         try:
             for coro in asyncio.as_completed(tasks):
                 task_result = await coro
-                name = task_names.get(asyncio.current_task(), "unknown")
-                # Find the task name by matching result
                 if task_result.success:
-                    task_result.markdown = await asyncio.to_thread(
-                        clean_content, task_result.markdown, url, aggressive_clean
+                    loop = asyncio.get_running_loop()
+                    task_result.markdown = await loop.run_in_executor(
+                        get_executor(), clean_content, task_result.markdown, url, aggressive_clean,
                     )
                     source_name = task_result.source or "anti_bot"
                     log.info("Anti-bot firebreak succeeded for %s via %s", url, source_name)

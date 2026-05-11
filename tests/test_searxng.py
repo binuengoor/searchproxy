@@ -27,7 +27,7 @@ async def client(monkeypatch):
     import httpx
 
     _real_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
-    monkeypatch.setattr("app.main._client", _real_client)
+    monkeypatch.setattr("app.clients._client", _real_client)
 
     from httpx import ASGITransport
 

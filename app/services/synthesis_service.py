@@ -48,6 +48,16 @@ def _build_user_content(query: str, sources: list[SourceChunk]) -> str:
     return "\n".join(parts)
 
 
+def _dynamic_max_tokens(sources: list[SourceChunk], base_max: int) -> int:
+    """Scale max_tokens to query complexity: fewer sources → shorter answer."""
+    if not sources:
+        return 256
+    per_source = 150
+    base = 256
+    dynamic = base + len(sources) * per_source
+    return min(dynamic, base_max)
+
+
 class SynthesisService:
     """Calls LiteLLM chat completions to synthesize an answer from sources."""
 
@@ -58,6 +68,7 @@ class SynthesisService:
     def _build_payload(self, query: str, sources: list[SourceChunk], stream: bool = False) -> dict:
         """Build the LiteLLM chat payload (shared by sync and streaming paths)."""
         user_content = _build_user_content(query, sources)
+        max_tokens = _dynamic_max_tokens(sources, self._settings.SYNTHESIS_MAX_TOKENS)
         return {
             "model": self._settings.LITELLM_CHAT_MODEL,
             "messages": [
@@ -65,7 +76,7 @@ class SynthesisService:
                 {"role": "user", "content": user_content},
             ],
             "temperature": 0.3,
-            "max_tokens": self._settings.SYNTHESIS_MAX_TOKENS,
+            "max_tokens": max_tokens,
             "stream": stream,
         }
 
@@ -108,7 +119,7 @@ class SynthesisService:
                 self._settings.LITELLM_CHAT_URL,
                 json=payload,
                 headers=headers,
-                timeout=httpx.Timeout(60.0, connect=10.0),
+                timeout=httpx.Timeout(self._settings.SYNTHESIS_TIMEOUT, connect=10.0),
             )
             response.raise_for_status()
             data = response.json()
@@ -173,7 +184,7 @@ class SynthesisService:
                 self._settings.LITELLM_CHAT_URL,
                 json=payload,
                 headers=headers,
-                timeout=httpx.Timeout(60.0, connect=10.0),
+                timeout=httpx.Timeout(self._settings.SYNTHESIS_TIMEOUT, connect=10.0),
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():

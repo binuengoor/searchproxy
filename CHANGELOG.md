@@ -2,6 +2,55 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.8.2] — 2026-05-11
+
+### Performance
+
+- **Dynamic `max_tokens` for synthesis** (`app/services/synthesis_service.py`)
+  - `max_tokens` now scales with source count: `256 + 150 * len(sources)` instead of static `2048`. Simple queries finish 2–4× faster.
+- **Cap raw HTML before cleaning** (`app/services/content_cleaner.py`)
+  - `_MAX_CLEAN_INPUT = 200_000` chars. Prevents `trafilatura` from blocking the thread pool on huge pages.
+- **Dedicated thread pool for content cleaning** (`app/clean_executor.py`, `app/services/fetch_chain.py`)
+  - `ThreadPoolExecutor(max_workers=16)` isolates CPU-bound `trafilatura` / regex work from the default asyncio pool. Reduces head-of-line blocking under concurrent load.
+- **Refined prefetch re-fetch heuristic** (`app/services/retrieve_service.py`)
+  - Only re-fetches speculative prefetches on confirmed anti-bot blocks (`_is_anti_bot_block`), not on short content. Eliminates wasted re-fetches on legitimate short pages.
+- **Client disconnect detection** (`app/services/retrieve_service.py`, `app/routers/retrieve.py`)
+  - Checks `request.is_disconnected()` after search, rerank, and fetch phases. Aborts early with HTTP 499 instead of burning CPU/bandwidth on abandoned requests.
+- **Configurable rerank timeout** (`app/config.py`, `app/services/rerank_service.py`)
+  - New `RERANK_TIMEOUT=10.0` (was hardcoded `15.0`).
+- **Configurable synthesis timeout** (`app/config.py`, `app/services/synthesis_service.py`)
+  - New `SYNTHESIS_TIMEOUT=60.0`.
+
+### Fixed
+
+- **Division-by-zero in `_budget_step`** (`app/services/retrieve_steps.py`)
+  - If all `relevance_score`s are `0.0`, `total_weight` now falls back to `len(sources) * 0.5` instead of crashing.
+- **Dead `asyncio.current_task()` code in firebreak** (`app/services/fetch_chain.py`)
+  - Removed unused / incorrect `task_names.get(asyncio.current_task(), "unknown")` inside `as_completed` loop.
+- **`_derive_source` path typo** (`app/middleware/request_logger.py`)
+  - Fixed `/compat/firecrawl/scrape` → `/compat/firecrawl/v2/scrape`.
+- **Reduced `VACUUM` frequency** (`app/observability.py`)
+  - `VACUUM` only runs when `deleted > 1000` rows. Avoids exclusive-lock pauses on small purges.
+- **Removed eager cache expiry `DELETE` on read miss** (`app/services/cache.py`)
+  - Stale rows are harmless and tiny; avoids write-lock contention under load.
+- **Use `html.unescape`** (`app/services/content_cleaner.py`)
+  - Replaced manual entity decoding with stdlib `html.unescape` (faster and more complete).
+
+### Architecture
+
+- **Split `retrieve_service.py` into `retrieve_steps.py`** (`app/services/retrieve_steps.py`)
+  - Extracted pure helpers and pipeline steps from the 615-line orchestrator. `RetrieveService` is now ~150 lines.
+- **Moved `_client`/`get_client()` to `app/clients.py`** (`app/clients.py`)
+  - Eliminates circular import that forced bottom-of-file router imports in `main.py`.
+- **Test isolation** (`tests/conftest.py`)
+  - Added `reset_dependencies` fixture (autouse) that clears all DI singletons between tests.
+
+### Tests
+
+- 128 tests passing, zero regressions.
+
+---
+
 ## [0.8.1] — 2026-05-11
 
 ### Performance
@@ -29,32 +78,6 @@ All notable changes to SearchProxy will be documented in this file.
 ---
 
 ## [0.8.0] — 2026-05-09
-
-### Performance
-
-- **Reduced synthesis prompt budget** ()
-  -  20000 → 12000 chars. Saves ~2k tokens (~40% of prompt), reduces synthesis latency by 3–5s.
-- **Capped speculative prefetch** ()
-  -  (new config var). Prevents wasted fetches on URLs that rerank may demote. Reduces downstream load per query.
-- **Dynamic per-URL fetch timeout** ()
-  -  — no single URL starves the batch. Fair share per concurrent fetch.
-- **Replaced  + nested  with ** ()
-  - Eliminates task-completed race condition where pending tasks inside gather completed before wait_for checked them, causing hangs.
-
-### Fixed
-
-- ** deadlock in DI factories** ()
-  - Singleton factories call each other nested (e.g.  → ). Non-reentrant  caused the same event-loop thread to deadlock on re-acquisition. Replaced with . Fixes pre-existing test hangs in  and .
-- **Dead code removal** ()
-  - Removed unused  constant.
-
-### Tests
-
-- 128 tests passing (up from 99).  no longer hangs.
-
----
-
- ## [0.8.0] — 2026-05-09
 
 ### Added
 

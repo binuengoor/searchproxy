@@ -61,25 +61,33 @@
 
 ---
 
-### v0.8.1 Patch -- Code Review Fixes (2026-05-11)
+### v0.8.2 — Code Review Implementation (2026-05-11)
 
-- [x] Cut synthesis prompt by 40% (RETRIEVE_MAX_TOTAL_CONTENT 20000 -> 12000)
-- [x] Cap speculative prefetch at 3 URLs (RETRIEVE_PREFETCH_MAX = 3)
-- [x] Fix asyncio.wait() race -- replaced with asyncio.gather() + dynamic per-URL timeout
-- [x] Fix threading.Lock() deadlock in DI factories -> threading.RLock()
-- [x] Remove dead _HTML_INDICATORS tuple from content_cleaner.py
-- [x] 128 tests passing (was 99)
+**Performance:**
+- [x] Dynamic `max_tokens` for synthesis (scales with source count)
+- [x] Cap raw HTML to 200KB before content cleaning
+- [x] Dedicated thread pool (`clean_executor.py`) for CPU-bound trafilatura/regex work
+- [x] Refined prefetch re-fetch heuristic — only on anti-bot blocks, not short content
+- [x] Client disconnect detection in `/v1/retrieve` pipeline (HTTP 499 abort)
+- [x] Configurable rerank timeout (`RERANK_TIMEOUT=10.0`)
+- [x] Configurable synthesis timeout (`SYNTHESIS_TIMEOUT=60.0`)
+
+**Bugs:**
+- [x] Fix division-by-zero in `_budget_step` when all relevance scores are 0.0
+- [x] Remove dead `asyncio.current_task()` code in anti-bot firebreak loop
+- [x] Fix `_derive_source` path typo (`/v2/scrape`)
+- [x] Reduce `VACUUM` frequency — only when deleted > 1000 rows
+- [x] Remove eager cache expiry `DELETE` on read miss (avoids write-lock contention)
+- [x] Use `html.unescape` instead of manual entity decoding
+
+**Maintainability:**
+- [x] Split `retrieve_service.py` (615 lines) into `retrieve_service.py` + `retrieve_steps.py`
+- [x] Move `_client`/`get_client()` to `app/clients.py` (eliminates circular import)
+- [x] Add `reset_dependencies` autouse fixture in `conftest.py`
+- [x] Update `.env.example` with all new config vars
+- [x] 128 tests passing, zero regressions
 
 ---
-
-### v0.8.1 Patch -- Code Review Fixes (2026-05-11)
-
-- [x] Cut synthesis prompt by 40% (RETRIEVE_MAX_TOTAL_CONTENT 20000 -> 12000)
-- [x] Cap speculative prefetch at 3 URLs (RETRIEVE_PREFETCH_MAX = 3)
-- [x] Fix asyncio.wait() race -- replaced with asyncio.gather() + dynamic per-URL timeout
-- [x] Fix threading.Lock() deadlock in DI factories -> threading.RLock()
-- [x] Remove dead _HTML_INDICATORS tuple from content_cleaner.py
-- [x] 128 tests passing (was 99)
 
 ### Known Issues / Limitations
 

@@ -196,8 +196,8 @@ class CacheService(SQLiteBase):
                 return None
             value_json, expires_at = row
             if time.time() > expires_at:
-                conn.execute("DELETE FROM cache WHERE key = ?", (key,))
-                conn.commit()
+                # Lazy expiry: don't delete on read miss to avoid write-lock
+                # contention under load. Stale rows are harmless and tiny.
                 return None
             return json.loads(value_json)
         except Exception:

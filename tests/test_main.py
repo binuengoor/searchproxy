@@ -22,11 +22,11 @@ async def test_root_redirects_to_docs(client: AsyncClient):
 async def test_root_redirect_with_auth_enabled(monkeypatch, anyio_backend):
     """Root path is excluded from auth — works even when require_auth=true."""
     import httpx
-    import app.main
+    import app.clients
     import app.config
 
     _real_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
-    monkeypatch.setattr(app.main, "_client", _real_client)
+    monkeypatch.setattr(app.clients, "_client", _real_client)
 
     original_settings = app.config.settings
     app.config.settings = app.config.Settings(

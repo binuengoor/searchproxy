@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import get_retrieve_service
@@ -54,6 +54,7 @@ Search/rerank/fetch phases are still synchronous; only synthesis streams.
 )
 async def retrieve(
     body: RetrieveRequest,
+    request: Request,
     service: Annotated[RetrieveService, Depends(get_retrieve_service)],
 ) -> RetrieveResponse | StreamingResponse:
     """One-shot research endpoint. Searches the web, reranks results,
@@ -78,6 +79,7 @@ async def retrieve(
                 query=body.query,
                 max_results=body.max_results,
                 fetch_top_k=body.fetch_top_k,
+                request=request,
             ),
             media_type="text/event-stream",
         )
@@ -87,4 +89,5 @@ async def retrieve(
         max_results=body.max_results,
         fetch_top_k=body.fetch_top_k,
         synthesize=body.synthesize,
+        request=request,
     )

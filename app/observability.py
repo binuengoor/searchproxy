@@ -199,8 +199,9 @@ class ObservabilityStore(SQLiteBase):
                 log.info("Purged %d old observability records", deleted)
                 # VACUUM can't run inside a transaction, so commit the DELETE first
                 conn.commit()
-                # VACUUM is a no-lock operation in WAL mode
-                conn.execute("VACUUM")
+                # Only VACUUM when deletion is significant to avoid lock overhead
+                if deleted > 1000:
+                    conn.execute("VACUUM")
             return deleted
         except Exception:
             log.warning("Observability purge failed", exc_info=True)
@@ -220,7 +221,8 @@ class ObservabilityStore(SQLiteBase):
             if deleted:
                 log.info("Cleared all %d observability records", deleted)
                 conn.commit()
-                conn.execute("VACUUM")
+                if deleted > 1000:
+                    conn.execute("VACUUM")
             return deleted
         except Exception:
             log.warning("Observability delete_all failed", exc_info=True)

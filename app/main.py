@@ -179,11 +179,11 @@ async def root() -> RedirectResponse:
 # Routers
 # ---------------------------------------------------------------------------
 
-from app.routers import search, searxng, vane, fetch, firecrawl, metrics, retrieve
+from app.routers import search, searxng, research, fetch, firecrawl, metrics, retrieve
 
 app.include_router(search.router)
 app.include_router(searxng.router)
-app.include_router(vane.router)
+app.include_router(research.router)
 app.include_router(fetch.router)
 app.include_router(firecrawl.router)
 app.include_router(metrics.router)

@@ -17,6 +17,7 @@ from app.services.fetch_chain import FetchChain
 from app.services.litellm_search import LiteLLMSearchClient
 from app.services.rerank_service import RerankService
 from app.services.retrieve_service import RetrieveService
+from app.services.deep_research_service import DeepResearchService
 from app.services.searxng_compat import SearxngCompatService
 from app.services.synthesis_service import SynthesisService
 from app.services.vane_proxy import VaneProxyClient
@@ -30,6 +31,7 @@ _synthesis_service: SynthesisService | None = None
 _retrieve_service: RetrieveService | None = None
 _searxng_service: SearxngCompatService | None = None
 _vane_client: VaneProxyClient | None = None
+_deep_research_service: DeepResearchService | None = None
 
 
 def _get_cache() -> CacheService:
@@ -121,3 +123,21 @@ def get_vane_client() -> VaneProxyClient:
             if _vane_client is None:
                 _vane_client = VaneProxyClient(client=get_client(), settings=settings)
     return _vane_client
+
+
+def get_deep_research_service() -> DeepResearchService:
+    """Return the shared DeepResearchService singleton (thread-safe lazy init)."""
+    global _deep_research_service
+    if _deep_research_service is None:
+        with _lock:
+            if _deep_research_service is None:
+                _deep_research_service = DeepResearchService(
+                    search_client=get_litellm_client(),
+                    rerank_service=get_rerank_service(),
+                    fetch_chain=get_fetch_chain(),
+                    synthesis_service=get_synthesis_service(),
+                    settings=settings,
+                    http_client=get_client(),
+                )
+    return _deep_research_service
+

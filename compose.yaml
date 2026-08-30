@@ -14,7 +14,6 @@ services:
       - BYPARR_URL=http://byparr:8191/v1
       - TIKA_URL=http://tika:9998/tika
       - SEARXNG_URL=http://searxng:8080/search
-      - VANE_URL=http://vane:3000
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -28,7 +27,6 @@ services:
       - byparr
       - tika
       - searxng
-      - vane
 
   crawl4ai:
     image: unclecode/crawl4ai:latest
@@ -67,19 +65,5 @@ services:
       - SEARXNG_BASE_URL=https://searxng.home.askbp.win
     restart: unless-stopped
 
-  vane:
-    image: itzcrazykns1337/vane:latest
-    container_name: searchproxy-vane
-    ports:
-      - "3001:3000"
-    volumes:
-      - ./vane/data:/home/vane/data
-    environment:
-      - SEARXNG_API_URL=http://searxng:8080
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
-    depends_on:
-      - searxng
 
 

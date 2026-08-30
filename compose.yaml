@@ -76,6 +76,8 @@ services:
       - ./vane/data:/home/vane/data
     environment:
       - SEARXNG_API_URL=http://searxng:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     depends_on:
       - searxng

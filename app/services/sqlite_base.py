@@ -39,12 +39,20 @@ class SQLiteBase:
       to get automatic retry on lock contention
     """
 
-    _local = threading.local()
-    _write_lock = threading.Lock()
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._local = threading.local()
+        self._write_lock = threading.Lock()
 
     def _ensure_dirs(self) -> None:
         """Create parent directory for the database file if it doesn't exist."""
-        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Fallback to /tmp if parent path is read-only (e.g. macOS test runner)
+            filename = Path(self._db_path).name
+            self._db_path = f"/tmp/{filename}"
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
 
     def _get_conn(self) -> sqlite3.Connection:
         """Get a thread-local connection, creating and configuring one if needed."""
@@ -71,19 +79,14 @@ class SQLiteBase:
         Acquires the write lock, runs ``fn(conn, *args)``, and retries
         on ``OperationalError("database is locked")`` with exponential backoff.
         Commits on success.
-
-        Args:
-            fn: A callable ``(conn, *args) -> None`` that executes write SQL.
-            *args: Extra arguments passed to fn (after conn).
-            retries: Max retry attempts for lock contention.
         """
         with self._write_lock:
             conn = self._get_conn()
             for attempt in range(retries):
                 try:
-                    fn(conn, *args)
+                    res = fn(conn, *args)
                     conn.commit()
-                    return
+                    return res
                 except sqlite3.OperationalError as exc:
                     if "locked" in str(exc).lower() and attempt < retries - 1:
                         delay = _WRITE_RETRY_DELAY * (2 ** attempt)
@@ -92,5 +95,5 @@ class SQLiteBase:
                             attempt + 1, retries, delay * 1000,
                         )
                         time.sleep(delay)
-                        continue
-                    raise
+                    else:
+                        raise

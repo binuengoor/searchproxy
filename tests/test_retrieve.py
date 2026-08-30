@@ -637,3 +637,46 @@ async def test_retrieve_no_synthesize_keeps_source_content(
     data = resp.json()
     assert len(data["sources"]) == 1
     assert "Full content here" in data["sources"][0]["content"]
+
+
+@pytest.mark.anyio
+async def test_retrieve_nested_body_wrapper(
+    client: AsyncClient,
+    mock_search: AsyncMock,
+    mock_rerank: AsyncMock,
+    mock_fetch: AsyncMock,
+    mock_synthesize: AsyncMock,
+):
+    """RetrieveRequest parses nested {'body': {'query': '...'}} from MCPHub/OpenWebUI."""
+    mock_search.return_value = SearchResponse(results=[
+        SearchResult(title="Test", url="https://test.com", snippet="test"),
+    ])
+    mock_rerank.return_value = [RerankResult(index=0, relevance_score=0.9, text="Test")]
+    mock_fetch.return_value = MockFetchResult(success=True, url="https://test.com", markdown="Content", title="Test")
+    mock_synthesize.return_value = ("Answer [1].", [Citation(id=1, url="https://test.com", title="Test")])
+
+    resp = await client.post("/v1/retrieve", json={"body": {"query": "Real Madrid schedule"}})
+    assert resp.status_code == 200
+    assert resp.json()["query"] == "Real Madrid schedule"
+
+
+@pytest.mark.anyio
+async def test_retrieve_messages_wrapper(
+    client: AsyncClient,
+    mock_search: AsyncMock,
+    mock_rerank: AsyncMock,
+    mock_fetch: AsyncMock,
+    mock_synthesize: AsyncMock,
+):
+    """RetrieveRequest extracts query from OpenAI-style messages array."""
+    mock_search.return_value = SearchResponse(results=[
+        SearchResult(title="Test", url="https://test.com", snippet="test"),
+    ])
+    mock_rerank.return_value = [RerankResult(index=0, relevance_score=0.9, text="Test")]
+    mock_fetch.return_value = MockFetchResult(success=True, url="https://test.com", markdown="Content", title="Test")
+    mock_synthesize.return_value = ("Answer [1].", [Citation(id=1, url="https://test.com", title="Test")])
+
+    resp = await client.post("/v1/retrieve", json={"messages": [{"role": "user", "content": "When is next match?"}]})
+    assert resp.status_code == 200
+    assert resp.json()["query"] == "When is next match?"
+

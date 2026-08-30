@@ -6,11 +6,13 @@ import logging
 from datetime import datetime, timezone
 from urllib.parse import quote
 
+import sqlite3
 import httpx
 
 from app.config import Settings
 from app.services.fetch_utils import safe_fetch
 from app.services.models import FetchResult
+from app.services.sqlite_base import SQLiteBase
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +31,68 @@ def _check_credits(used: int, limit: int) -> bool:
     return used < limit
 
 
+class QuotaStore(SQLiteBase):
+    """SQLite-backed persistent quota storage for anti-bot credits."""
+
+    def __init__(self, db_path: str) -> None:
+        super().__init__(db_path)
+        self._ensure_dirs()
+        self._init_schema()
+
+    def _create_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS monthly_credits (
+                service_name TEXT NOT NULL,
+                month_key INTEGER NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (service_name, month_key)
+            )
+        """)
+
+    def get_used(self, service_name: str, month_key: int) -> int:
+        try:
+            conn = self._get_conn()
+            cur = conn.execute(
+                "SELECT used FROM monthly_credits WHERE service_name = ? AND month_key = ?",
+                (service_name, month_key),
+            )
+            row = cur.fetchone()
+            return row[0] if row else 0
+        except Exception as e:
+            log.warning("QuotaStore get_used failed for %s: %s", service_name, e)
+            return 0
+
+    def increment(self, service_name: str, month_key: int) -> int:
+        def _do_inc(conn: sqlite3.Connection) -> int:
+            conn.execute("""
+                INSERT INTO monthly_credits (service_name, month_key, used)
+                VALUES (?, ?, 1)
+                ON CONFLICT(service_name, month_key) DO UPDATE SET used = used + 1
+            """, (service_name, month_key))
+            cur = conn.execute(
+                "SELECT used FROM monthly_credits WHERE service_name = ? AND month_key = ?",
+                (service_name, month_key),
+            )
+            return cur.fetchone()[0]
+
+        try:
+            return self._write(_do_inc)
+        except Exception as e:
+            log.warning("QuotaStore increment failed for %s: %s", service_name, e)
+            return 0
+
+
+_global_quota_store: QuotaStore | None = None
+
+
+def get_quota_store(settings: Settings) -> QuotaStore:
+    """Get or create the singleton QuotaStore."""
+    global _global_quota_store
+    if _global_quota_store is None:
+        _global_quota_store = QuotaStore(settings.CACHE_DB_PATH)
+    return _global_quota_store
+
+
 class AntiBotClient:
     """Base class for anti-bot fetch services with monthly credit tracking.
 
@@ -45,9 +109,10 @@ class AntiBotClient:
     _SOURCE: str = ""            # e.g. "scrape_do", "scraperapi"
     _DEFAULT_CREDIT_LIMIT: int = 1000
 
-    def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
+    def __init__(self, client: httpx.AsyncClient, settings: Settings, quota_store: QuotaStore | None = None) -> None:
         self._client = client
         self._settings = settings
+        self._quota_store = quota_store or get_quota_store(settings)
         self._timeout = httpx.Timeout(
             timeout=float(settings.ANTIBOT_TIMEOUT),
             connect=self._settings.CONNECT_TIMEOUT,
@@ -84,16 +149,11 @@ class AntiBotClient:
             )
 
         current_month = _current_month_key()
-        stored_month: int = self._tracker["month"]
-
-        # Reset counter on new month
-        if stored_month != current_month:
-            self._tracker["used"] = 0
-            self._tracker["month"] = current_month
-            log.info("%s credit counter reset for new month", self._SERVICE_NAME)
-
-        used: int = self._tracker["used"]
+        # Read persisted usage from SQLite store
+        used = self._quota_store.get_used(self._SERVICE_NAME, current_month)
         limit: int = self._tracker["limit"]
+        self._tracker["month"] = current_month
+        self._tracker["used"] = used
 
         if not _check_credits(used, limit):
             log.warning(
@@ -120,14 +180,15 @@ class AntiBotClient:
             timeout=self._timeout,
         )
 
-        # Increment credit counter on success
+        # Increment persistent credit counter on success
         if result.success:
-            self._tracker["used"] = used + 1
+            new_used = self._quota_store.increment(self._SERVICE_NAME, current_month)
+            self._tracker["used"] = new_used
             log.info(
                 "%s fetch succeeded for %s — credits used: %d/%d",
                 self._SERVICE_NAME,
                 url,
-                self._tracker["used"],
+                new_used,
                 limit,
             )
 

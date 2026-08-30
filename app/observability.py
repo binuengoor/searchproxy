@@ -70,7 +70,7 @@ class LogRecord:
 
 class ObservabilityStore(SQLiteBase):
     def __init__(self, settings: Settings) -> None:
-        self._db_path = str(settings.OBSERVABILITY_DB_PATH)
+        super().__init__(str(settings.OBSERVABILITY_DB_PATH))
         self._enabled = settings.OBSERVABILITY_ENABLED
         self._retention_days = settings.OBSERVABILITY_RETENTION_DAYS
         if self._enabled:

@@ -50,14 +50,6 @@ class Settings(BaseSettings):
         default=5.0,
         description="Timeout in seconds for the BGE reranker call.",
     )
-    CF_RERANK_API_KEY: str | None = Field(
-        default=None,
-        description="API key for cf-inference reranker. Omit if the endpoint is open.",
-    )
-    CF_RERANK_MODEL: str = Field(
-        default="@cf/baai/bge-reranker-base",
-        description="Model identifier for cf-inference reranker.",
-    )
 
     # --- Retrieve: tuning ---
     RETRIEVE_MAX_CONTENT_PER_SOURCE: int = Field(
@@ -124,9 +116,31 @@ class Settings(BaseSettings):
     # --- Fetch: Jina Reader ---
     JINA_API_KEY: str | None = Field(default=None)
 
+    # --- Fetch: Byparr / Cloudflare Solver ---
+    BYPARR_URL: str | None = Field(
+        default=None,
+        description="Byparr or FlareSolverr endpoint URL (e.g. http://byparr:8191/v1).",
+    )
+
+    # --- Fetch: Document Extraction (Apache Tika) ---
+    TIKA_URL: str | None = Field(
+        default=None,
+        description="Apache Tika server endpoint for PDF/Doc text extraction (e.g. http://tika:9998/tika).",
+    )
+
     # --- Fetch: Anti-bot (quarantined) ---
     SCRAPE_DO_API_KEY: str | None = Field(default=None)
     SCRAPERAPI_API_KEY: str | None = Field(default=None)
+
+    # --- Domain Diversity & Filtering ---
+    MAX_PER_DOMAIN_SOURCES: int = Field(
+        default=2,
+        description="Maximum number of sources to fetch from a single root domain.",
+    )
+    ENABLE_SSRF_PROTECTION: bool = Field(
+        default=False,
+        description="Block requests to private/internal IP ranges (10.0.0.0/8, 127.0.0.0/8, etc.).",
+    )
 
     # --- Logging ---
     LOG_LEVEL: str = Field(default="INFO")
@@ -143,6 +157,8 @@ class Settings(BaseSettings):
     VANE_TIMEOUT: int = Field(default=120)
     CRAWL4AI_TIMEOUT: int = Field(default=15)
     JINA_TIMEOUT: int = Field(default=15)
+    BYPARR_TIMEOUT: int = Field(default=30)
+    TIKA_TIMEOUT: int = Field(default=20)
     ANTIBOT_TIMEOUT: int = Field(default=45)
 
     # --- Connect timeout (shared across all HTTP clients) ---

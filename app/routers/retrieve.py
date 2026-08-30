@@ -78,6 +78,8 @@ async def retrieve(
                 query=body.query,
                 max_results=body.max_results,
                 fetch_top_k=body.fetch_top_k,
+                include_domains=body.include_domains,
+                exclude_domains=body.exclude_domains,
                 request=request,
             ),
             media_type="text/event-stream",
@@ -88,5 +90,7 @@ async def retrieve(
         max_results=body.max_results,
         fetch_top_k=body.fetch_top_k,
         synthesize=body.synthesize,
+        include_domains=body.include_domains,
+        exclude_domains=body.exclude_domains,
         request=request,
     )

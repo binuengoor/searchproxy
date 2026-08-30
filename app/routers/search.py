@@ -1,14 +1,17 @@
-from __future__ import annotations
-
+import json
 import logging
-from typing import Annotated
+import time
+import uuid
+from typing import Annotated, AsyncIterator
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.dependencies import get_litellm_client
+from app.dependencies import get_litellm_client, get_retrieve_service
 from app.schemas import MessageItem
 from app.services.litellm_search import LiteLLMSearchClient, SearchResponse
+from app.services.retrieve_service import RetrieveService
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="", tags=["search"])
@@ -125,3 +128,144 @@ async def openai_search_alias(
         body.max_results,
     )
     return await client.search(query=body.query, max_results=body.max_results)
+
+
+class ChatCompletionRequest(BaseModel):
+    """Standard OpenAI/Perplexity-style chat completion request."""
+
+    model: str = Field(default="sonar", description="Model name.")
+    messages: list[MessageItem] = Field(default=[], description="Chat messages array.")
+    stream: bool = Field(default=False, description="Enable SSE streaming.")
+    max_tokens: int | None = Field(default=None, description="Max tokens.")
+    temperature: float | None = Field(default=None, description="Temperature.")
+
+
+async def _openai_stream_adapter(
+    query: str,
+    model: str,
+    stream_iter: AsyncIterator[str],
+) -> AsyncIterator[str]:
+    cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+    citations: list[str] = []
+
+    async for line in stream_iter:
+        if line.startswith("event: token\ndata: "):
+            token_json = line[len("event: token\ndata: ") :].rstrip("\r\n")
+            try:
+                token = json.loads(token_json)
+                chunk = {
+                    "id": cmpl_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": token},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n"
+            except Exception:
+                pass
+        elif line.startswith("event: source\ndata: "):
+            try:
+                src_json = line[len("event: source\ndata: ") :].rstrip("\r\n")
+                src_data = json.loads(src_json)
+                if "url" in src_data:
+                    citations.append(src_data["url"])
+            except Exception:
+                pass
+        elif line.startswith("event: done\ndata: "):
+            chunk = {
+                "id": cmpl_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "citations": citations,
+            }
+            yield f"data: {json.dumps(chunk)}\n\n"
+            yield "data: [DONE]\n\n"
+
+
+@router.post(
+    "/compat/perplexity/chat/completions",
+    response_model=None,
+    status_code=status.HTTP_200_OK,
+    summary="Perplexity-compatible /chat/completions endpoint",
+    operation_id="perplexity_chat_completions",
+    include_in_schema=False,
+)
+@router.post(
+    "/v1/chat/completions",
+    response_model=None,
+    status_code=status.HTTP_200_OK,
+    summary="OpenAI-compatible /chat/completions alias",
+    operation_id="openai_chat_completions",
+    include_in_schema=False,
+)
+async def perplexity_chat_completions(
+    body: ChatCompletionRequest,
+    request: Request,
+    service: Annotated[RetrieveService, Depends(get_retrieve_service)],
+) -> JSONResponse | StreamingResponse:
+    """1:1 Drop-in replacement for Perplexity API / Open WebUI perplexity_search driver.
+
+    Routes queries through SearchProxy's /v1/retrieve pipeline and returns an
+    OpenAI-shaped chat completion response with citations array.
+    """
+    # Extract query from messages
+    query = ""
+    for msg in reversed(body.messages):
+        if getattr(msg, "role", None) == "user" and getattr(msg, "content", None):
+            query = msg.content.strip()
+            break
+
+    if not query:
+        query = "hello"
+
+    if body.stream:
+        stream_iter = service.retrieve_stream(query=query, request=request)
+        return StreamingResponse(
+            _openai_stream_adapter(query, body.model, stream_iter),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    res = await service.retrieve(query=query, request=request)
+    cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+
+    return JSONResponse(
+        content={
+            "id": cmpl_id,
+            "object": "chat.completion",
+            "created": created,
+            "model": body.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": res.answer,
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "citations": [c.url for c in res.citations],
+            "sources": [s.model_dump() for s in res.sources],
+        }
+    )

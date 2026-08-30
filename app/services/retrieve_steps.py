@@ -215,6 +215,25 @@ async def _refetch_anti_bot(
         return None
 
 
+def _make_fetch_task(
+    url: str,
+    fetch_chain: FetchChain,
+    per_url_timeout: float,
+    content_filter: str | None = None,
+    content_query: str | None = None,
+) -> asyncio.Task:
+    async def _fetch_one() -> FetchResult:
+        async with asyncio.timeout(per_url_timeout):
+            return await fetch_chain.execute(
+                url,
+                aggressive_clean=True,
+                skip_firebreak=False,
+                content_filter=content_filter,
+                content_query=content_query,
+            )
+    return asyncio.create_task(_fetch_one(), name=f"fetch:{url[:80]}")
+
+
 async def fetch_step(
     top_urls: list[dict[str, str]],
     seen_keys: dict[str, int],
@@ -236,20 +255,15 @@ async def fetch_step(
         if url in prefetch_tasks:
             fetch_tasks.append(prefetch_tasks[url])
         else:
-            async def _fetch_one(
-                u: str = url,
-                cf: str | None = content_filter,
-                cq: str | None = content_query,
-            ) -> FetchResult:
-                async with asyncio.timeout(per_url_timeout):
-                    return await fetch_chain.execute(
-                        u,
-                        aggressive_clean=True,
-                        skip_firebreak=False,
-                        content_filter=cf,
-                        content_query=cq,
-                    )
-            fetch_tasks.append(asyncio.create_task(_fetch_one(), name=f"fetch:{url[:80]}"))
+            fetch_tasks.append(
+                _make_fetch_task(
+                    url=url,
+                    fetch_chain=fetch_chain,
+                    per_url_timeout=per_url_timeout,
+                    content_filter=content_filter,
+                    content_query=content_query,
+                )
+            )
 
     try:
         async with asyncio.timeout(batch_timeout):

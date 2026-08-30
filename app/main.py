@@ -17,6 +17,9 @@ from app.clean_executor import init_executor, shutdown_executor
 import app.clients as _clients_module
 from app.observability import init_store, ObservabilityStore
 from app.middleware import request_logger as _request_logger_module
+from app.middleware.auth import AuthMiddleware, EXCLUDED_PATHS
+from app.middleware.mcp_unwrap import MCPBodyUnwrapMiddleware
+from app.middleware.metrics import MetricsMiddleware
 from app.middleware.correlation import CorrelationIdMiddleware
 from app.middleware.json_formatter import JsonFormatter, CorrelationIdFilter
 from app.openapi_deref import dereference
@@ -120,7 +123,7 @@ app = FastAPI(
         "OpenAPI spec — agents should use the two primary tools above.\n\n"
         "**/metrics** — Prometheus monitoring. NOT a search tool."
     ),
-    version="0.8.1",
+    version="0.8.3",
     lifespan=lifespan,
 )
 # Force OpenAPI 3.0.3 for max client compatibility (MCPHub, Open WebUI).
@@ -133,104 +136,27 @@ _original_openapi = app.openapi
 
 
 def _dereferenced_openapi() -> dict[str, Any]:
+    if app.openapi_schema:
+        return app.openapi_schema
     raw = _original_openapi()
-    return dereference(raw)
+    derefed = dereference(raw)
+    app.openapi_schema = derefed
+    return derefed
 
 
 app.openapi = _dereferenced_openapi  # type: ignore[method-assign]
 
-# Register correlation ID middleware first (outermost) so all downstream
-# middleware and route handlers can access the correlation ID.
+# Register middleware stack (outermost to innermost):
+# 1. Correlation ID (outermost)
 app.add_middleware(CorrelationIdMiddleware)
-
-# Register observability middleware at import time.
-# The middleware uses module-level variables (_store, _settings)
-# set later in lifespan; until then it passes through.
+# 2. Observability request logging
 app.add_middleware(_request_logger_module.ObservabilityMiddleware)
-
-# ---------------------------------------------------------------------------
-# API key middleware
-# ---------------------------------------------------------------------------
-
-EXCLUDED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc", "/", "/metrics"}
-
-
-@app.middleware("http")
-async def mcp_body_unwrap(request: Request, call_next: object) -> JSONResponse:
-    """Unwrap MCPHub's nested ``body`` key for POST/PUT/PATCH requests.
-
-    When MCPHub generates tools from an OpenAPI spec, it wraps the request
-    body inside a ``body`` key: ``{"body": {"query": "..."}}``.
-    FastAPI expects the fields at the top level, so this middleware detects
-    the wrapper and rewrites the request body to flatten it.
-    """
-    if request.method in ("POST", "PUT", "PATCH") and request.headers.get(
-        "content-type", ""
-    ).startswith("application/json"):
-        try:
-            raw = await request.body()
-            if raw:
-                data = json.loads(raw)
-                # Heuristic: if the body is a dict with exactly one key "body"
-                # whose value is also a dict, flatten it.
-                if (
-                    isinstance(data, dict)
-                    and list(data.keys()) == ["body"]
-                    and isinstance(data["body"], dict)
-                ):
-                    log.debug("MCPHub body unwrap: flattening nested 'body' key")
-                    # Replace the request body with the unwrapped version
-                    new_body = json.dumps(data["body"]).encode()
-                    request._body = new_body  # type: ignore[attr-defined]
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass  # Not valid JSON — leave untouched
-
-    return await call_next(request)  # type: ignore[return-value]
-
-
-@app.middleware("http")
-async def auth_middleware(request: Request, call_next: object) -> JSONResponse:
-    """Require Bearer token on all routes if SEARCHPROXY_REQUIRE_AUTH is enabled."""
-    if not _config_module.settings.SEARCHPROXY_REQUIRE_AUTH:
-        return await call_next(request)  # type: ignore[return-value]
-
-    if request.url.path in EXCLUDED_PATHS:
-        return await call_next(request)  # type: ignore[return-value]
-
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Missing or invalid Authorization header"},
-        )
-
-    token = auth_header[7:]
-    if token != _config_module.settings.SEARCHPROXY_API_KEY:
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Invalid API key"},
-        )
-
-    return await call_next(request)  # type: ignore[return-value]
-
-
-# ---------------------------------------------------------------------------
-# Metrics request counting
-# ---------------------------------------------------------------------------
-
-_metrics = get_collector()
-
-_METRICS_EXCLUDED = EXCLUDED_PATHS | {"/metrics"}
-
-
-@app.middleware("http")
-async def metrics_middleware(request: Request, call_next: object) -> JSONResponse:
-    """Count every non-excluded request for /metrics endpoint."""
-    response = await call_next(request)
-    path = request.url.path
-    if path not in _METRICS_EXCLUDED:
-        _metrics.inc_requests(request.method, path, response.status_code)
-    return response
+# 3. Metrics request counting
+app.add_middleware(MetricsMiddleware)
+# 4. Auth token verification
+app.add_middleware(AuthMiddleware)
+# 5. MCP request body unwrap (innermost)
+app.add_middleware(MCPBodyUnwrapMiddleware)
 
 
 # ---------------------------------------------------------------------------

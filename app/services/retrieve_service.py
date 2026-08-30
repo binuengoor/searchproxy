@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import urllib.parse
 from typing import AsyncIterator
 
 from fastapi import Request
@@ -72,19 +73,43 @@ class RetrieveService:
         self._settings = settings
         self._cache = cache
 
-    async def _run_pipeline(
+    async def _pipeline_setup(
         self,
         query: str,
         max_results: int,
         fetch_top_k: int,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
         request: Request | None = None,
-    ) -> tuple[list[SourceChunk], int, int, int, list[dict[str, str]]]:
-        """Run search → dedup → rerank → fetch → quality gates."""
+    ) -> tuple[dict[str, int], dict[int, float], dict[str, asyncio.Task], list[dict[str, str]]]:
+        """Run search, dedup, speculative prefetch, rerank, and top-K candidate selection.
+
+        Returns (seen_keys, score_map, prefetch_tasks, top_urls).
+        If no search results are found, returns ({}, {}, {}, []).
+        """
         # ── Step 1: Search ───────────────────────────────────────────────
         results, _ = await search_step(self._search, query, max_results)
         await check_disconnect(request)
         if not results:
-            return [], 0, 0, 0, []
+            return {}, {}, {}, []
+
+        # ── Step 1.5: Domain filtering ──────────────────────────────────
+        if include_domains:
+            inc_set = {d.strip().lower() for d in include_domains if d.strip()}
+            results = [
+                r for r in results
+                if any(inc in urllib.parse.urlparse(r["url"]).netloc.lower() for inc in inc_set)
+            ]
+
+        if exclude_domains:
+            exc_set = {d.strip().lower() for d in exclude_domains if d.strip()}
+            results = [
+                r for r in results
+                if not any(exc in urllib.parse.urlparse(r["url"]).netloc.lower() for exc in exc_set)
+            ]
+
+        if not results:
+            return {}, {}, {}, []
 
         # ── Step 2: Dedup ────────────────────────────────────────────────
         deduped, seen_keys = dedup_step(results)
@@ -112,10 +137,50 @@ class RetrieveService:
         )
         await check_disconnect(request)
 
-        # ── Step 4: Select top K URLs to fetch ──────────────────────────
-        fetch_count = min(fetch_top_k, len(reranked_indices))
-        top_urls: list[dict[str, str]] = [deduped[idx] for idx in reranked_indices[:fetch_count]]
-        log.info("Retrieve pipeline: fetching top %d URLs", len(top_urls))
+        # ── Step 4: Select top K URLs to fetch with domain diversity ────
+        top_urls: list[dict[str, str]] = []
+        domain_counts: dict[str, int] = {}
+        max_per_domain = self._settings.MAX_PER_DOMAIN_SOURCES
+
+        for idx in reranked_indices:
+            cand = deduped[idx]
+            domain = urllib.parse.urlparse(cand["url"]).netloc.lower()
+            if domain_counts.get(domain, 0) < max_per_domain:
+                top_urls.append(cand)
+                domain_counts[domain] = domain_counts.get(domain, 0) + 1
+                if len(top_urls) >= fetch_top_k:
+                    break
+
+        if len(top_urls) < min(fetch_top_k, len(reranked_indices)):
+            existing_urls = {u["url"] for u in top_urls}
+            for idx in reranked_indices:
+                cand = deduped[idx]
+                if cand["url"] not in existing_urls:
+                    top_urls.append(cand)
+                    if len(top_urls) >= fetch_top_k:
+                        break
+
+        log.info("Retrieve pipeline: selected %d top URLs across %d domains", len(top_urls), len(domain_counts))
+        return seen_keys, score_map, prefetch_tasks, top_urls
+
+    async def _run_pipeline(
+        self,
+        query: str,
+        max_results: int,
+        fetch_top_k: int,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+        request: Request | None = None,
+    ) -> tuple[list[SourceChunk], int, int, int, list[dict[str, str]]]:
+        """Run search → dedup → rerank → fetch → quality gates."""
+        seen_keys, score_map, prefetch_tasks, top_urls = await self._pipeline_setup(
+            query, max_results, fetch_top_k,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+            request=request,
+        )
+        if not top_urls:
+            return [], 0, 0, 0, []
 
         # ── Step 5: Parallel fetch + quality gates ──────────────────────
         sources, sources_fetched, sources_failed, sources_skipped = await fetch_step(
@@ -136,11 +201,16 @@ class RetrieveService:
         max_results: int = 10,
         fetch_top_k: int = 5,
         synthesize: bool = True,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
         request: Request | None = None,
     ) -> RetrieveResponse:
         """Run the full retrieve pipeline (non-streaming)."""
         sources, sources_fetched, sources_failed, sources_skipped, top_urls = await self._run_pipeline(
-            query=query, max_results=max_results, fetch_top_k=fetch_top_k, request=request,
+            query=query, max_results=max_results, fetch_top_k=fetch_top_k,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+            request=request,
         )
 
         if not sources and sources_failed == 0 and sources_skipped == 0:
@@ -232,6 +302,8 @@ class RetrieveService:
         query: str,
         max_results: int = 10,
         fetch_top_k: int = 5,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
         request: Request | None = None,
     ) -> AsyncIterator[str]:
         """Run the full retrieve pipeline and stream the LLM synthesis as SSE.
@@ -241,42 +313,18 @@ class RetrieveService:
         entire batch.
         """
         # ── Steps 1-4: Search, dedup, rerank, select top K ───────────────
-        results, _ = await search_step(self._search, query, max_results)
-        await check_disconnect(request)
-        if not results:
+        seen_keys, score_map, prefetch_tasks, top_urls = await self._pipeline_setup(
+            query, max_results, fetch_top_k,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+            request=request,
+        )
+        if not top_urls:
             meta = {"query": query, "sources_fetched": 0, "sources_failed": 0}
             yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
             yield f"event: token\ndata: {json.dumps('No search results found.')}\n\n"
             yield f"event: done\ndata: {json.dumps({'finish_reason': 'no_results'})}\n\n"
             return
-
-        deduped, seen_keys = dedup_step(results)
-
-        prefetch_tasks: dict[str, asyncio.Task] = {}
-        if self._settings.RETRIEVE_PREFETCH_DURING_RERANK:
-            prefetch_count = min(self._settings.RETRIEVE_PREFETCH_MAX, fetch_top_k, len(deduped))
-            for i in range(prefetch_count):
-                url = deduped[i]["url"]
-                prefetch_tasks[url] = asyncio.create_task(
-                    self._fetch.execute(
-                        url,
-                        aggressive_clean=True,
-                        skip_firebreak=True,
-                        content_filter="bm25",
-                        content_query=query,
-                    ),
-                    name=f"prefetch:{url[:80]}",
-                )
-            log.info("Retrieve pipeline: speculatively prefetching %d URLs during rerank", len(prefetch_tasks))
-
-        reranked_indices, score_map = await rerank_step(
-            query, deduped, fetch_top_k, self._rerank, self._settings,
-        )
-        await check_disconnect(request)
-
-        fetch_count = min(fetch_top_k, len(reranked_indices))
-        top_urls: list[dict[str, str]] = [deduped[idx] for idx in reranked_indices[:fetch_count]]
-        log.info("Retrieve pipeline: fetching top %d URLs", len(top_urls))
 
         # ── Step 5: Incremental fetch + stream sources ───────────────────
         meta = {"query": query, "sources_fetched": 0, "sources_failed": 0}

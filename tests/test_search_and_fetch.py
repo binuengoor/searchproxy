@@ -34,11 +34,21 @@ def fetch_chain(monkeypatch):
     from app.services.fetch_chain import FetchChain
 
     mock_client = MagicMock()
+    monkeypatch.setattr(settings, "SCRAPE_DO_API_KEY", "mock-scrape-do-key")
+    monkeypatch.setattr(settings, "SCRAPERAPI_API_KEY", "mock-scraperapi-key")
+    monkeypatch.setattr(settings, "BYPARR_URL", None)
+    monkeypatch.setattr(settings, "TIKA_URL", None)
     chain = FetchChain(client=mock_client, settings=settings)
 
     # Swap real service instances for mocks
     chain._crawl4ai = AsyncMock()
     chain._jina = AsyncMock()
+    chain._byparr = MagicMock()
+    chain._byparr.is_configured.return_value = False
+    chain._byparr.fetch = AsyncMock()
+    chain._tika = MagicMock()
+    chain._tika.is_configured.return_value = False
+    chain._tika.parse_bytes = AsyncMock()
     chain._scrape_do = AsyncMock()
     chain._scraper_api = AsyncMock()
 
@@ -340,3 +350,44 @@ async def test_fetch_chain_500_transient_then_anti_bot(fetch_chain):
     assert result.source == "scrape_do"
     assert chain._crawl4ai.fetch_markdown.await_count == 2
     chain._jina.fetch.assert_not_awaited()
+
+@pytest.mark.anyio
+async def test_fetch_chain_byparr_success(fetch_chain):
+    """When Byparr is configured and Crawl4AI hits Cloudflare, Byparr resolves it first."""
+    chain = fetch_chain
+    chain._byparr.is_configured.return_value = True
+    chain._crawl4ai.fetch_markdown.return_value = FetchResult(
+        success=False, url="https://example.com", error="blocked", status_code=403, source="crawl4ai"
+    )
+    chain._byparr.fetch.return_value = FetchResult(
+        success=True, url="https://example.com", markdown="Byparr unblocked content", source="byparr"
+    )
+
+    result = await chain.execute("https://example.com")
+
+    assert result.success is True
+    assert result.source == "byparr"
+    assert result.markdown == "Byparr unblocked content"
+    chain._scrape_do.fetch.assert_not_awaited()
+    chain._scraper_api.fetch.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_fetch_chain_tika_pdf_extraction(fetch_chain):
+    """When a PDF URL is passed, Tika extracts text directly."""
+    chain = fetch_chain
+    chain._tika.is_configured.return_value = True
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.content = b"%PDF-1.4 test bytes"
+    chain._client.get = AsyncMock(return_value=mock_resp)
+    chain._tika.parse_bytes.return_value = FetchResult(
+        success=True, url="https://arxiv.org/pdf/1234.pdf", markdown="Extracted Paper Content", source="tika"
+    )
+
+    result = await chain.execute("https://arxiv.org/pdf/1234.pdf")
+
+    assert result.success is True
+    assert result.source == "tika"
+    assert result.markdown == "Extracted Paper Content"
+    chain._crawl4ai.fetch_markdown.assert_not_awaited()

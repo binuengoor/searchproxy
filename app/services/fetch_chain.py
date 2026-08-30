@@ -14,6 +14,8 @@ from app.clean_executor import get_executor
 from app.config import Settings
 from app.services.content_cleaner import clean_content
 from app.services.models import FetchResult
+from app.services.byparr_client import ByparrClient
+from app.services.tika_client import TikaClient
 from app.services.crawl4ai import Crawl4AIClient
 from app.middleware.correlation import _current_correlation_id
 from app.services.metrics import get_collector
@@ -44,9 +46,9 @@ def _is_anti_bot_block(status_code: int | None, body: str) -> bool:
 
 
 class FetchChain:
-    """Orchestrates the tiered fetch chain: Crawl4AI → Jina Reader → anti-bot firebreak.
+    """Orchestrates the tiered fetch chain: Crawl4AI → Jina Reader → Byparr → anti-bot firebreak.
 
-    Anti-bot services (Scrape.do, ScraperAPI) are only invoked when a response
+    Anti-bot services (Byparr, Scrape.do, ScraperAPI) are only invoked when a response
     is a confirmed anti-bot block (403 or Cloudflare indicators in body).
     They are NEVER invoked for routine 5xx or timeout failures.
     """
@@ -57,10 +59,13 @@ class FetchChain:
         settings: Settings,
         cache: "CacheService | None" = None,
     ) -> None:
+        self._client = client
         self._settings = settings
         self._cache = cache
         self._crawl4ai = Crawl4AIClient(client=client, settings=settings)
         self._jina = JinaReaderClient(client=client, settings=settings)
+        self._byparr = ByparrClient(client=client, settings=settings)
+        self._tika = TikaClient(client=client, settings=settings)
         self._scrape_do = ScrapeDoClient(client=client, settings=settings)
         self._scraper_api = ScraperAPIClient(client=client, settings=settings)
 
@@ -140,6 +145,19 @@ class FetchChain:
                     log.warning("Cache deserialization failed for %s: %s", url, exc)
             else:
                 log.info("Cache MISS for fetch: %s", url)
+
+        # ── Document / PDF Extraction via Tika ────────────────────────
+        if (url.lower().endswith(".pdf") or ".pdf?" in url.lower()) and self._tika.is_configured():
+            try:
+                resp = await self._client.get(url, follow_redirects=True, timeout=self._settings.TIKA_TIMEOUT)
+                if resp.status_code == 200 and resp.content:
+                    tika_result = await self._tika.parse_bytes(resp.content, url)
+                    if tika_result.success:
+                        tika_result.fetch_time_ms = self._elapsed_ms(start_time)
+                        await self._store_fetch(url, tika_result)
+                        return tika_result
+            except Exception as exc:
+                log.warning("Tika direct PDF extraction failed for %s: %s", url, exc)
 
         # ── Tier 1: Crawl4AI (with 1 transient retry) ────────────────────
         result = await self._crawl4ai.fetch_markdown(
@@ -252,15 +270,28 @@ class FetchChain:
         return result
 
     async def _firebreak(self, url: str, start_time: float, aggressive_clean: bool = False) -> FetchResult:
-        """Execute the anti-bot firebreak: Scrape.do and ScraperAPI in parallel.
+        """Execute the anti-bot firebreak: Byparr first (free), then Scrape.do + ScraperAPI in parallel.
 
         Only called for confirmed anti-bot blocks. Never called for routine
         5xx or timeout failures. Inherits start_time for end-to-end timing.
-
-        Both anti-bot services run concurrently — the first successful result
-        wins, and the other is cancelled. This reduces latency by the time
-        the first service would have spent waiting for the second sequentially.
         """
+        # 1. Try local Byparr Cloudflare challenge solver first (free, fast)
+        if self._byparr.is_configured():
+            byparr_res = await self._byparr.fetch(url)
+            if byparr_res.success:
+                loop = asyncio.get_running_loop()
+                byparr_res.markdown = await loop.run_in_executor(
+                    get_executor(), clean_content, byparr_res.markdown, url, aggressive_clean,
+                )
+                log.info("Anti-bot firebreak succeeded for %s via Byparr", url)
+                get_collector().inc_tier("byparr", "success")
+                byparr_res.fetch_time_ms = self._elapsed_ms(start_time)
+                return byparr_res
+            else:
+                get_collector().inc_tier("byparr", "fail")
+                log.warning("Byparr solver failed for %s: %s", url, byparr_res.error)
+
+        # 2. Parallel cloud anti-bot fallbacks (Scrape.do, ScraperAPI)
         tasks: list[asyncio.Task] = []
         task_names: dict[asyncio.Task, str] = {}
 

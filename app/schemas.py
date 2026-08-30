@@ -10,7 +10,9 @@ Import into request-body models or response-body models as needed.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+import json
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class MessageItem(BaseModel):
@@ -62,8 +64,7 @@ class RetrieveRequest(BaseModel):
     )
 
     query: str = Field(
-        ...,
-        min_length=1,
+        default="",
         description="Research query. The pipeline searches, reranks, fetches, and synthesizes an answer.",
     )
     max_results: int = Field(
@@ -82,6 +83,64 @@ class RetrieveRequest(BaseModel):
         default=False,
         description="If true, return an SSE stream with source metadata arriving progressively as fetches complete, followed by real-time LLM synthesis tokens. Requires synthesize=true.",
     )
+    include_domains: list[str] = Field(
+        default=[],
+        description="Optional list of domain names to restrict search results to (whitelist).",
+    )
+    exclude_domains: list[str] = Field(
+        default=[],
+        description="Optional list of domain names to filter out of search results (blacklist).",
+    )
+    freshness: str | None = Field(
+        default=None,
+        description="Optional time recency filter for search results: 'day', 'week', 'month', 'year'.",
+    )
+    # Open WebUI & MCPHub tool wrapper compatibility
+    body: Any = Field(default=None, description="Optional nested body wrapper from MCPHub / Open WebUI tool invocations.")
+    messages: list[MessageItem] = Field(default=[], description="OpenAI-style messages array. Query is extracted from the last user message if query is omitted.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        # 1. If 'body' wrapper is present
+        if "body" in data and data["body"]:
+            nested = data["body"]
+            if isinstance(nested, str):
+                try:
+                    nested = json.loads(nested)
+                except Exception:
+                    pass
+            if isinstance(nested, dict):
+                for k in ("query", "max_results", "fetch_top_k", "synthesize", "stream", "messages"):
+                    if k in nested and (k not in data or not data[k]):
+                        data[k] = nested[k]
+
+        # 2. If 'query' is empty but 'messages' is present
+        if not data.get("query") and data.get("messages"):
+            msgs = data["messages"]
+            if isinstance(msgs, list):
+                for msg in reversed(msgs):
+                    if isinstance(msg, dict):
+                        role = msg.get("role")
+                        content = msg.get("content")
+                        if role == "user" and isinstance(content, str):
+                            data["query"] = content.strip()
+                            break
+
+        # 3. If query is still empty, check other common field aliases
+        if not data.get("query"):
+            for alt in ("q", "search_query", "text", "prompt", "input"):
+                if data.get(alt) and isinstance(data[alt], str):
+                    data["query"] = data[alt].strip()
+                    break
+
+        if not data.get("query"):
+            raise ValueError("A non-empty 'query' string is required.")
+
+        return data
 
 
 class SourceChunk(BaseModel):

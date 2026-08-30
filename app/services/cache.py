@@ -32,46 +32,22 @@ class CacheService(SQLiteBase):
     Uses a thread-local connection to avoid open/close overhead per operation.
     """
 
-    _local = threading.local()
-
     def __init__(self, settings: Settings) -> None:
+        super().__init__(str(Path(settings.CACHE_DB_PATH)))
         self._enabled = settings.CACHE_ENABLED
-        self._db_path = str(Path(settings.CACHE_DB_PATH))
         self._search_ttl = settings.CACHE_SEARCH_TTL
         self._fetch_ttl = settings.CACHE_FETCH_TTL
         self._rerank_ttl = settings.CACHE_RERANK_TTL
         self._synthesis_ttl = settings.CACHE_SYNTHESIS_TTL
 
         if self._enabled:
-            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-            # Initialize schema on the main thread connection
-            self._ensure_schema()
+            self._ensure_dirs()
+            self._init_schema()
             log.info("Cache enabled: %s (search_ttl=%ds, fetch_ttl=%ds, rerank_ttl=%ds, synthesis_ttl=%ds)", self._db_path, self._search_ttl, self._fetch_ttl, self._rerank_ttl, self._synthesis_ttl)
         else:
             log.info("Cache disabled")
 
-    # ------------------------------------------------------------------
-    # Thread-local connection management
-    # ------------------------------------------------------------------
-
-    def _get_conn(self) -> sqlite3.Connection:
-        """Get a thread-local connection, creating and initializing one if needed."""
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(self._db_path)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            self._local.conn = conn
-            # Ensure schema exists on this connection's first use
-            self._init_schema_on_conn(conn)
-        return conn
-
-    def _ensure_schema(self) -> None:
-        """Initialize schema on the main thread connection."""
-        conn = self._get_conn()
-        # Schema init already done via _get_conn -> _init_schema_on_conn
-
-    def _init_schema_on_conn(self, conn: sqlite3.Connection) -> None:
+    def _create_schema(self, conn: sqlite3.Connection) -> None:
         """Create tables and indexes if they don't exist on the given connection."""
         try:
             conn.execute(
@@ -84,7 +60,6 @@ class CacheService(SQLiteBase):
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at)")
-            conn.commit()
         except Exception:
             log.exception("Cache schema init failed")
 

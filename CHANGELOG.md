@@ -2,6 +2,17 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.8.4] — 2026-08-30
+
+### Features & Infrastructure
+- **Unified All-In-One Docker Stack**: Consolidated `searchproxy`, `crawl4ai`, `byparr` (Cloudflare challenge solver), and `tika` (PDF/document extraction) into a single compose definition (`compose.yaml` / `docker-compose.yml`).
+- **Byparr Cloudflare Solver Tier**: Integrated Byparr / FlareSolverr solver client in `FetchChain` to bypass Cloudflare Turnstile/WAF challenges locally for free before falling back to paid anti-bot APIs.
+- **Apache Tika Document Extraction**: Added direct binary PDF document parsing in `FetchChain` via Apache Tika.
+- **Domain Whitelisting & Blacklisting**: Added `include_domains` and `exclude_domains` support to `RetrieveRequest` and `/v1/retrieve`.
+- **Domain Diversity Re-scoring**: Enforced `MAX_PER_DOMAIN_SOURCES` in candidate selection to ensure multi-source coverage and avoid single-domain skew.
+- **OpenAI / Perplexity Drop-In API**: Implemented `/compat/perplexity/chat/completions` and `/v1/chat/completions` supporting streaming (SSE) and non-streaming synthesis with citations.
+- **Open WebUI Architecture Consolidation**: Decoupled standalone Tika/FlareSolverr from Open WebUI and pointed Open WebUI to the unified SearchProxy stack.
+
 ## [0.8.3] — 2026-05-11
 
 ### Performance

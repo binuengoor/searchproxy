@@ -1,4 +1,4 @@
-"""Tests for Native Deep Research Service & /v1/research and /vane endpoints."""
+"""Tests for Native Deep Research Service & /v1/research endpoint."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -44,16 +44,6 @@ async def test_v1_research_endpoint(client, mock_deep_research_service):
     assert len(data["citations"]) == 1
     assert data["citations"][0]["url"] == "https://example.com"
     mock_deep_research_service.research.assert_awaited_once()
-
-
-@pytest.mark.anyio
-async def test_legacy_vane_endpoint(client, mock_deep_research_service):
-    """POST /vane executes deep research and returns legacy report shape."""
-    resp = await client.post("/vane", json={"query": "quantum computing breakthroughs"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "report" in data
-    assert "Deep Research Report" in data["report"]
 
 
 @pytest.mark.anyio

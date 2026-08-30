@@ -20,7 +20,6 @@ from app.services.retrieve_service import RetrieveService
 from app.services.deep_research_service import DeepResearchService
 from app.services.searxng_compat import SearxngCompatService
 from app.services.synthesis_service import SynthesisService
-from app.services.vane_proxy import VaneProxyClient
 
 _lock = threading.RLock()
 _cache_service: CacheService | None = None
@@ -30,7 +29,6 @@ _rerank_service: RerankService | None = None
 _synthesis_service: SynthesisService | None = None
 _retrieve_service: RetrieveService | None = None
 _searxng_service: SearxngCompatService | None = None
-_vane_client: VaneProxyClient | None = None
 _deep_research_service: DeepResearchService | None = None
 
 
@@ -113,16 +111,6 @@ def get_searxng_service() -> SearxngCompatService:
                     settings=settings,
                 )
     return _searxng_service
-
-
-def get_vane_client() -> VaneProxyClient:
-    """Return the shared VaneProxyClient singleton (thread-safe lazy init)."""
-    global _vane_client
-    if _vane_client is None:
-        with _lock:
-            if _vane_client is None:
-                _vane_client = VaneProxyClient(client=get_client(), settings=settings)
-    return _vane_client
 
 
 def get_deep_research_service() -> DeepResearchService:

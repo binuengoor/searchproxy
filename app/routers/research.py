@@ -82,11 +82,6 @@ class ResearchRequest(BaseModel):
         return data
 
 
-class LegacyVaneResponse(BaseModel):
-    """Legacy shape for /vane compatibility."""
-    report: str = Field(description="Synthesized markdown research report")
-
-
 @router.post(
     "/v1/research",
     response_model=RetrieveResponse,
@@ -110,26 +105,3 @@ async def deep_research(
         request=request,
     )
 
-
-@router.post(
-    "/vane",
-    response_model=LegacyVaneResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Legacy Vane deep research compatibility endpoint",
-    operation_id="vane_legacy",
-    include_in_schema=False,
-)
-async def legacy_vane_endpoint(
-    body: ResearchRequest,
-    request: Request,
-    service: Annotated[DeepResearchService, Depends(get_deep_research_service)],
-) -> LegacyVaneResponse:
-    """Backward compatibility endpoint for existing callers of /vane."""
-    res = await service.research(
-        query=body.query,
-        fetch_top_k=body.fetch_top_k,
-        include_domains=body.include_domains,
-        exclude_domains=body.exclude_domains,
-        request=request,
-    )
-    return LegacyVaneResponse(report=res.answer)

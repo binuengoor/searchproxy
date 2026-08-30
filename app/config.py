@@ -97,13 +97,6 @@ class Settings(BaseSettings):
     CACHE_SYNTHESIS_TTL: int = Field(default=3600, description="TTL for synthesized answer cache entries in seconds.")
     CACHE_DB_PATH: str = Field(default="/data/cache.db", description="Path to SQLite cache database.")
 
-    # --- Vane deep research ---
-    VANE_URL: str = Field(default="http://vane-host:3001")
-    VANE_CHAT_PROVIDER_ID: str | None = Field(default=None)
-    VANE_CHAT_MODEL_KEY: str | None = Field(default=None)
-    VANE_EMBED_PROVIDER_ID: str | None = Field(default=None)
-    VANE_EMBED_MODEL_KEY: str | None = Field(default=None)
-
     # --- Compat: SearXNG passthrough ---
     SEARXNG_URL: str | None = Field(default=None)
 

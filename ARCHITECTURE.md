@@ -1,444 +1,107 @@
-# SearchProxy
+# SearchProxy Architecture
 
-Self-hosted web search and content fetch gateway. Thin relay to LiteLLM search routers, multi-tier fetch chain with anti-bot quarantine, and proxy layer for Vane deep research. Built-in observability captures every request/response to SQLite with a live-refresh UI at `/logs`.
+Self-hosted AI search and deep research gateway. Built with FastAPI, SQLite observability, LiteLLM routing, BGE neural reranking, a 4-tier anti-bot fetch chain (with Byparr and Apache Tika), and a native Python 2-hop deep research engine.
 
-## Purpose
+---
 
-- **Fetch:** Retrieve web page content through a priority chain: self-hosted Crawl4AI → Jina Reader → anti-bot specialists (Scrape.do, ScraperAPI) reserved only for Cloudflare-protected sites.
-- **Vane:** Transparent proxy to Vane deep-research service.
-- **Compat:** Compatibility bridges for external API formats:
-    - `/compat/perplexity` — Perplexity/OpenAI-style search responses (thin relay to LiteLLM).
-    - `/compat/searxng` — SearXNG JSON format. Supports optional image/video passthrough to upstream SearXNG.
-
-## Design Constraints
-
-- Self-hosted. No SaaS APIs for core search (delegate to LiteLLM router).
-- Low-maintenance. Single config file. No manual provider lists or rotation logic.
-- Security-first. No `curl | bash`. No hard-coded secrets. Optional API keys only for external fallbacks.
-- Anti-bot credits quarantined. Scrape.do (1,000/mo) and ScraperAPI (1,000/mo) are **never** used for normal fetches. Only when Crawl4AI + Jina both fail on a known anti-bot block (403 with Cloudflare indicators).
-- Zero external containers for observability. Request/response logging uses SQLite inside the single searchproxy container.
-
-## Stack
+## 1. System Architecture
 
 ```
-Python 3.11+
-FastAPI
-httpx (async HTTP client)
-Pydantic (validation)
-SQLite (observability + caching persistence)
+                          ┌─────────────────────────────────────────────────────────┐
+                          │            SearchProxy Suite (compose.yaml)             │
+                          │                                                         │
+                          │  ┌───────────────┐         ┌─────────────────────────┐  │
+ [External Clients] ────► │  │  SearchProxy  │ ──────► │ Crawl4AI (:11235)        │  │
+ (Open WebUI / Agents /   │  │  (:8080)      │         │ Primary JS & DOM Scraper│  │
+  LiteLLM / Tools)        │  └───────┬───────┘         └─────────────────────────┘  │
+                          │          │                                              │
+                          │          ├───────────────► ┌─────────────────────────┐  │
+                          │          │                 │ Byparr (:8191)          │  │
+                          │          │                 │ Cloudflare Solver Tier  │  │
+                          │          │                 └─────────────────────────┘  │
+                          │          │                                              │
+                          │          ├───────────────► ┌─────────────────────────┐  │
+                          │          │                 │ Apache Tika (:9998)     │  │
+                          │          │                 │ PDF & Binary Doc Parser │  │
+                          │          │                 └─────────────────────────┘  │
+                          │          │                                              │
+                          │          └───────────────► ┌─────────────────────────┐  │
+                          │                            │ SearXNG (:8980)         │  │
+                          │                            │ Meta-Search Backend     │  │
+                          │                            └─────────────────────────┘  │
+                          └─────────────────────────────────────────────────────────┘
+                                     │
+                                     ▼
+                ┌───────────────────────────────────────────────┐
+                │             Upstream Infrastructure           │
+                │                                               │
+                │  • LiteLLM Router (:4000) (Search & Synthesis)│
+                │  • Cloudflare Workers BGE Reranker            │
+                │  • Jina Reader API                            │
+                │  • Scrape.do / ScraperAPI (Quarantined)       │
+                └───────────────────────────────────────────────┘
 ```
 
-## Endpoints
+---
 
-### MCP-visible tools (OpenAPI spec)
+## 2. Core Service Capabilities
 
-These are the tools that MCPHub/Open WebUI expose to LLM models. Call one of these when the user's intent matches the capability.
+### A. One-Shot Retrieval (`POST /v1/retrieve`)
+* **Latency:** 5–10s
+* **Pipeline:**
+  1. **Multi-Engine Search:** Dispatches queries to LiteLLM search router (Tavily, Brave, SearXNG, Exa).
+  2. **Deduplication & Domain Filtering:** Normalizes canonical URLs, enforces whitelists/blacklists, and caps results per domain (`MAX_PER_DOMAIN_SOURCES`).
+  3. **BGE Neural Reranking:** Scores candidates using `@cf/baai/bge-reranker-base` via Cloudflare Workers AI.
+  4. **Speculative Prefetching:** Pre-fetches top candidate URLs in parallel while reranking runs.
+  5. **Tiered Fetching:** Crawl4AI → Jina → Byparr → Paid Anti-bot + Tika for PDFs.
+  6. **Boilerplate Stripping:** Spam and cookie banner cleaning via `ContentCleaner` (20–60% token reduction).
+  7. **LLM Citation Synthesis:** Produces direct answer and key findings with inline `[N]` citations and streaming SSE support.
 
-| Tool | Endpoint | Method | When to use |
-|------|----------|--------|-------------|
-| **retrieve** | `POST /v1/retrieve` | POST | One-shot research: search → BGE rerank → parallel fetch → LLM synthesis with inline [N] citations. Streaming with `?stream=true`. Use when the user wants a synthesized answer, not just search metadata. |
-| **search_perplexity** | `POST /compat/perplexity` | POST | Quick web search for facts, current events, definitions, and simple lookups. Accepts `{"query": "..."}` or a full Open WebUI `messages` array (query auto-extracted from the last user message). |
-| **research_vane** | `POST /vane` | POST | Deep research requiring synthesis across multiple sources. Slower than simple search but produces a comprehensive report with inline citations. Set `optimization_mode` to `speed`/`balanced`/`quality`. |
-| **fetch_url** | `POST /fetch` | POST | Fetch content from a specific URL the user provided. Runs Crawl4AI → Jina Reader → anti-bot firebreak. Returns markdown with metadata. |
-| **health** | `GET /health` | GET | Liveness probe. No auth required. |
+### B. Native 2-Hop Deep Research (`POST /v1/research`)
+* **Latency:** 15–25s
+* **Pipeline:**
+  1. **Query Decomposition (Hop 1):** Fast LLM call breaks down complex topics into 2–3 distinct search sub-queries.
+  2. **Parallel Sub-Search (Hop 2):** Dispatches concurrent searches across all angles and pools results.
+  3. **Candidate Deduplication & Domain Diversity:** Merges candidates and filters out domain clusters.
+  4. **Neural Reranking:** Scores the merged candidate pool against the original primary query.
+  5. **Deep Multi-Source Extraction:** Reads 6–8 diverse sources in parallel via `FetchChain`.
+  6. **Comprehensive Report Synthesis:** Generates a structured multi-section cited report (Executive Summary, Detailed Analysis, Key Takeaways).
 
-### Runtime-only endpoints (callable but hidden from OpenAPI spec)
-
-These endpoints work at runtime for backward compatibility but are excluded from the generated `/openapi.json` so MCPHub does not expose duplicate tools to the model.
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/v1/search` | POST | Alias for `/compat/perplexity` — OpenAI-style path. |
-| `/compat/searxng` | GET | SearXNG JSON compatibility. Image/video passthrough to upstream SearXNG when configured. Supports `?format=json` (default), `?format=html`, and `?limit=N`. |
-| `/compat/searxng/search` | GET | Vane-compatible subpath for SearXNG search. Same behavior as `/compat/searxng`. |
-| `/compat/firecrawl/v2/scrape` | POST | Firecrawl v2-compatible scrape. Wraps the same fetch chain; accepts full Firecrawl request schema. Unsupported params accepted and ignored. |
-
-### Observability endpoints
-
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /logs` | Dark-themed HTML UI showing recent requests (live refresh 10s, filters, pagination, click-to-expand). |
-| `GET /api/logs` | JSON API for programmatic access: `?limit=20&offset=0&source=searxng&status=200`. |
-
-## Environment Configuration
-
-```bash
-# --- Core: API Authentication ---
-SEARCHPROXY_API_KEY=change-me-in-production
-
-# --- Compat: Perplexity / OpenAI search ---
-# LiteLLM search router endpoint. Must include the full router name.
-LITELLM_SEARCH_URL=http://litellm-host:4000/search/unifiedsearch
-
-# --- Vane deep research ---
-VANE_URL=http://vane-host:3001
-VANE_CHAT_PROVIDER_ID=
-VANE_CHAT_MODEL_KEY=
-VANE_EMBED_PROVIDER_ID=
-VANE_EMBED_MODEL_KEY=
-
-# --- Compat: SearXNG passthrough (optional; enables image/video categories) ---
-SEARXNG_URL=http://searxng-host:8980
-
-# --- Fetch: Crawl4AI (self-hosted) ---
-# Use /md for plain markdown fetch (fast, no LLM involved)
-# Use /crawl with extraction_config only for structured LLM extraction
-CRAWL4AI_URL=http://crawl4ai-host:11235
-
-# Optional: LLM config for Crawl4AI structured extraction (not plain fetch)
-# Only needed if using Crawl4AI's LLM extraction features
-CRAWL4AI_LLM_PROVIDER=openai/gpt-4o-mini
-CRAWL4AI_LLM_BASE_URL=http://litellm-host:4000/v1
-CRAWL4AI_LLM_API_KEY=sk-your-secret-key
-
-# --- Fetch: Jina Reader (optional key for higher rate limits) ---
-# No key = 20 RPM. With key = 500 RPM + access to Reranker/DeepSearch
-JINA_API_KEY=
-
-# --- Fetch: Anti-bot specialists (quarantined) ---
-SCRAPE_DO_API_KEY=
-SCRAPERAPI_API_KEY=
-
-# --- Observability ---
-# All inside the same container; no external services.
-OBSERVABILITY_ENABLED=true
-OBSERVABILITY_DB_PATH=/data/observability.db
-# --- Retrieve synthesis ---
-LITELLM_CHAT_URL=http://litellm-host:4000/v1
-LITELLM_CHAT_MODEL=openai/gpt-4o-mini
-SYNTHESIS_MAX_TOKENS=2048
-RETRIEVE_MIN_CONTENT_LENGTH=300
-
-# --- Cache (opt-in) ---
-CACHE_ENABLED=false
-CACHE_SEARCH_TTL=300
-CACHE_FETCH_TTL=86400
-CACHE_DB_PATH=/data/cache.db
-
-# --- Reranker ---
-CF_RERANK_URL=http://localhost:8787/v1/rerank
-CF_RERANK_MODEL=bge-reranker-base
-CF_RERANK_API_KEY=
-
-# --- Observability ---
-OBSERVABILITY_RETENTION_DAYS=7
+### C. Multi-Tier Anti-Bot Fetch Chain (`POST /fetch`)
+```
+Target URL
+  │
+  ├── 0. PDF / Binary Document? ──► Apache Tika (Direct text extraction)
+  │
+  ├── 1. Crawl4AI (Local Container) ──► Fast headless browser rendering
+  │      ├── Success ──► Clean Markdown
+  │      └── 5xx/Timeout? ──► Transient retry once after 1s
+  │
+  ├── 2. Jina Reader ──► High-fidelity markdown fallback
+  │      ├── Success ──► Clean Markdown
+  │      └── 403 / Cloudflare Challenge detected? ──► Escalates to Byparr
+  │
+  ├── 3. Byparr Cloudflare Solver ──► Automated local Turnstile & WAF challenge solver
+  │      └── Success ──► Clean Markdown
+  │
+  └── 4. Anti-Bot Firebreak (Paid APIs) ──► Scrape.do → ScraperAPI (Quarantined credits)
 ```
 
-All keys are optional. If missing, the associated fetch tier is simply skipped.
+---
 
-## Fetch Chain
+## 3. Compatibility Bridges
 
-**API Standard:** `/fetch` behaves like a standard web page fetcher — input is a URL, output is markdown/plain text with metadata. Comparable to `r.jina.ai/http://<URL>` or `firecrawl.dev`. Supports `?format=markdown|text|html`.
+1. **OpenAI / Perplexity Chat (`POST /v1/chat/completions`, `POST /compat/perplexity/chat/completions`):**
+   Full drop-in OpenAI-compatible chat endpoint with SSE streaming and top-level `citations: [...]` array.
+2. **Firecrawl v1 / v2 (`POST /compat/firecrawl/v1/scrape`, `POST /compat/firecrawl/v2/scrape`):**
+   Standard Firecrawl response envelope (`{"success": true, "data": {...}}`) powered by SearchProxy's 4-tier fetch engine.
+3. **SearXNG Search (`GET /compat/searxng`, `GET /compat/searxng/search`):**
+   SearXNG JSON and HTML search endpoint for Open WebUI web search integration.
 
-### API Standards
+---
 
-| Endpoint | Standard Comparable To | Input | Output |
-|----------|------------------------|-------|--------|
-| `/compat/perplexity` | Perplexity API | `{"query": "...", "max_results": 10}` | `{"results": [...]}` with title, url, snippet |
-| `/compat/searxng` | SearXNG JSON API (`?format=json`) | Query params: `q`, `categories`, `engines`, etc. | Standard SearXNG JSON with `results`, `answers`, `suggestions`, `infoboxes` |
-| `/v1/retrieve` | Perplexity, OpenAI search | `{"query": "...", "max_results": 10, "stream": false}` | Synthesized answer with inline [N] citations, source metadata, and optional streaming |
-| `/vane` | Vane, Perplexity, Jina DeepSearch | `{"query": "...", "optimization_mode": "balanced"}` | Synthesized report with inline citations. Streams when `?stream=true` |
-| `/fetch` | `r.jina.ai`, Firecrawl | `{"url": "https://..."}` or `?url=...` | Markdown/text + metadata |
+## 4. Observability & Performance
 
-### Image/Video Passthrough for `/compat/searxng`
-
-SearXNG supports `categories=images` and `categories=videos`, but LiteLLM search routers handle web search only.
-
-**Behavior:**
-- `categories=general` (default) or any unrecognized category: route through LiteLLM, return web results in SearXNG format.
-- `categories=images`, `categories=videos`, or engines like `bing images`, `youtube`: if `SEARXNG_URL` is configured, passthrough directly to the upstream SearXNG instance. Return raw SearXNG JSON (including `results[]` with image/video URLs, thumbnails, etc.).
-- If `SEARXNG_URL` is not set, return empty `results[]` for media categories. This is graceful degradation — clients see zero results, not an error.
-
-This keeps `/compat/searxng` functionally equivalent to a real SearXNG instance for all verticals Vane already uses. The passthrough is ~20 lines of code and adds zero operational complexity.
-
-```
-User requests POST /fetch {"url": "https://example.com"}
-```
-
-```
-User requests POST /fetch {"url": "https://..."}
-│
-▼
-1. Crawl4AI (self-hosted, primary)
-   ├── Success
-   │   ├── Content Cleaner  ──► trafilatura extracts article text
-   │   └── Return clean markdown + metadata
-   └── Failure
-       ├── Is 403 / Cloudflare / anti-bot indicator?
-       │   → Skip Jina (it can't bypass anti-bot)
-       │   → Go directly to Anti-Bot Firebreak
-       │
-       ├── Is 5xx or timeout?
-       │   → Retry Crawl4AI once after 1s delay (Crawl4AI may succeed on retry before Jina)
-       │   └── Still failing → Go to Jina Reader
-       │
-       └── Other error (DNS, 4xx, non-anti-bot)
-           → Go to Jina Reader
-           │   ├── Success
-           │   │   ├── Content Cleaner
-           │   │   └── Return clean markdown
-           │   └── Failure / Is anti-bot block?
-           │       → Go to Anti-Bot Firebreak
-           │
-▼
-2. Anti-Bot Firebreak (quarantined credits)
-   Only reached for confirmed anti-bot blocks
-   Priority: Scrape.do → ScraperAPI
-   ├── Success
-   │   ├── Content Cleaner  ──► strips scripts, navbars, cookie banners
-   │   └── Return clean markdown
-   └── Failure → Error (all tiers exhausted)
-```
-
-### Anti-Bot Detection
-
-A response is treated as an anti-bot block if any of these are true:
-- HTTP status is 403
-- Response body contains known indicators: `cloudflare`, `just a moment`, `checking your browser`, `ddos-guard`
-- Crawl4AI returns an explicit anti-bot error
-
-### Rate Limit Philosophy
-
-| Tier | Strategy |
-|------|----------|
-| Crawl4AI | No limit (self-hosted) |
-| Jina Reader | 20 RPM without key, 500 RPM with key |
-| Scrape.do | 1,000/month — tracked client-side to prevent overage |
-| ScraperAPI | 1,000/month — tracked client-side to prevent overage |
-
-Monthly counters for paid tiers reset on calendar-month boundaries.
-
-### Vane Error Handling
-
-Vane failures are **never silent**. The service raises typed exceptions (`VaneTimeoutError`, `VaneUpstreamError`, `VaneError`) that the router translates into explicit error messages in the response. This prevents the model from receiving an empty report after a minute-long wait and having no idea what went wrong.
-
-Transient 5xx errors (500, 502, 503, 504) are automatically retried up to **3 times** with a 1-second delay between attempts. Timeouts and 4xx errors are not retried.
-
-| Exception | Trigger | Router response |
-|---|---|---|
-| `VaneTimeoutError` | Vane didn't respond within mode-scaled timeout | `200` with report: `"[Deep research unavailable: ...timed out...]"` |
-| `VaneUpstreamError` | Vane returned non-2xx (e.g. 500) after retries exhausted | `200` with report: `"[Deep research unavailable: ...HTTP 500...]"` |
-| `VaneError` | Connection refused, DNS, other transport errors | `200` with report: `"[Deep research unavailable: ...]"` |
-
-The endpoint returns HTTP 200 with an error message in the report field rather than a 5xx status, because LLM tool-calling clients handle structured errors poorly. The model sees the failure reason and can inform the user or fall back to search.
-
-For **streaming** responses, errors are embedded as `"[Vane stream error: timeout]"` or `"[Vane stream error: HTTP 500]"` chunks in the text stream.
-
-## Observability
-
-Every request/response pair is captured to a SQLite database via a pure ASGI middleware. No external container, no network hop, no configuration beyond three env vars.
-
-**What gets captured:**
-- Request method, path, query params, headers, body (POST/PUT/PATCH only)
-- Response status, headers, body (truncated to 8KB)
-- Client IP, user agent, latency, timestamp
-- `source` field auto-derived from path and response payload (`searxng`, `litellm`, `vane`, `crawl4ai`, `jina`, etc.)
-
-**Excluded from logging:** `/health`, `/`, `/docs`, `/redoc`, `/openapi.json`, `/logs` — prevents noise and circular self-logging.
-
-**Retention:** Configurable via `OBSERVABILITY_RETENTION_DAYS` (default 7). Old records are purged automatically at startup and then every 6 hours by a background task. You can also clear all records manually via the **Clear All** button in the `/logs` UI, or by calling `DELETE /api/logs`. After any deletion, `VACUUM` runs to reclaim disk space.
-
-**Access:**
-- **Browser:** `GET /logs` — dark-themed HTML table with live refresh (10s), field filters, pagination, click-to-expand detail.
-- **JSON API:** `GET /api/logs?limit=20&offset=0&source=searxng` — programmatic access.
-- **SQL directly:** `sqlite3 /data/observability.db "SELECT * FROM request_logs ORDER BY id DESC LIMIT 10;"`
-
-## Project Layout
-
-```
-searchproxy/
-├── ARCHITECTURE.md          ← This file
-├── CHANGELOG.md             ← Release notes
-├── .cursorrules             ← AI agent context (optional)
-├── .gitignore
-│
-├── app/
-│   ├── __init__.py
-│   ├── main.py              ← FastAPI app, lifespan, middleware
-│   ├── config.py            ← Pydantic Settings from env
-│   ├── observability.py     ← SQLite store: insert, query, purge
-│   ├── middleware/
-│   │   ├── __init__.py
-│   │   └── request_logger.py ← ASGI middleware: capture req/resp to SQLite
-│   ├── routers/
-│   │   ├── __init__.py
-│   │   ├── logs.py          ← /logs HTML UI + /api/logs JSON endpoint
-│   │   ├── search.py        ← /compat/perplexity
-│   │   ├── searxng.py       ← /compat/searxng
-│   │   ├── vane.py          ← /vane (deep research proxy)
-│   │   └── fetch.py         ← /fetch (multi-tier chain)
-│   └── services/
-│       ├── __init__.py
-│       ├── litellm_search.py
-│       ├── searxng_compat.py
-│       ├── vane_proxy.py
-│       ├── crawl4ai.py
-│       ├── jina_reader.py
-│       ├── scrape_do.py
-│       ├── scraperapi.py
-│       └── fetch_chain.py   ← Orchestrates tiers + anti-bot detection
-│
-├── data/
-│   └── observability.db     ← SQLite volume (Docker: ./data:/data)
-│
-├── tests/
-├── Dockerfile
-├── docker-compose.yml
-├── pyproject.toml
-├── open-webui/
-│   ├── skill.md             ← Behavioral guidance: when to call each endpoint
-│   ├── prompt.md              ← System prompt preset for Native/Agentic Mode
-│   └── README.md              ← Setup guide: OpenAPI connection + skill attachment
-└── project/                   ← Gitignored working directory
-    ├── TODO.md              ← Current tasks and progress
-    ├── DECISIONS.md         ← Design decisions and rationale
-    └── CHANGELOG_WORKING.md ← Draft release notes
-```
-
-## MCP Server (Phase 2)
-
-SearchProxy does not expose a native MCP server. Instead, it serves a fully dereferenced OpenAPI 3.0 spec at `/openapi.json`. This allows any MCP gateway that supports OpenAPI ingestion (e.g. MCPHub) to auto-discover and route tools without a custom MCP implementation.
-
-**MCPHub configuration example:**
-```yaml
-# tools.yaml snippet
-- name: searchproxy
-  type: openapi
-  url: https://searchproxy.home.askbp.win/openapi.json
-```
-
-This approach replaces the need for a dedicated `mcp_server.py` module.
-
-## Best Practices
-
-These rules keep the codebase readable and safe to refactor six months from now. If a rule is broken, fix it immediately — don't "come back later."
-
-### 1. No Clever Code
-- Explicit over implicit. `if is_anti_bot: return anti_bot_fetch(url)` beats a ternary chain.
-- If it needs a comment to explain the *what*, rewrite it.
-- Comments explain the *why* only. The *what* must be obvious from the code.
-
-### 2. One Thing Per Module
-- A module either **fetches from one API** or **routes requests**. Never both.
-- `services/crawl4ai.py` calls Crawl4AI. `services/fetch_chain.py` orchestrates. `fetch_chain.py` never reaches into `httpx` directly.
-- If a module is over 150 lines, it is too big. Split it.
-
-### 3. No Premature Abstraction
-- If there is only one implementation, there is no interface and no base class.
-- No `BaseFetcher` with three overridden methods. Just three simple functions.
-- Add abstraction when a second real alternative exists, not when you imagine one might.
-
-### 4. Flat Over Nested
-- Max directory depth: `app/services/crawl4ai.py` (3 levels). Not `app/core/domain/services/fetch/crawl4ai.py`.
-- Flat is searchable. Deep is discoverable only by the person who built it.
-
-### 5. Configuration at the Boundary
-- **Only `app/config.py` reads environment variables.** No `os.environ.get("KEY")` anywhere else.
-- Pydantic Settings is the single source of truth for all config.
-- `.env` is the only file with secrets. `.env` is gitignored. Never put keys in code, tests, or docs.
-
-### 6. Explicit Error Handling
-- Never swallow exceptions silently. If a fetch fails, surface it.
-- Use typed result objects: `FetchResult(success=False, error="Cloudflare block", status=403)`.
-- Log once at the decision point, not in every inner function.
-
-### 7. Structured Logging Only
-- No `print()` anywhere. Use the standard `logging` module with an optional JSON formatter.
-- Every log line includes a `request_id`. Use `logging.LoggerAdapter` for this.
-- Log *decisions*, not noise. `"Escalating to anti-bot for github.com"` is useful. `"Got 200 from Jina"` is noise.
-
-### 8. Async Everything
-- All I/O is `async`. No `requests.get()`, no `open()`, no `time.sleep()`.
-- Use `asyncio.gather()` only for genuinely parallel, independent calls.
-- Every outbound request has a timeout. Default: 15s for search, 30s for fetch.
-
-### 9. Type Hints Everywhere
-- Every function signature has type hints. Every public function has a return type.
-- Use Pydantic models for request/response bodies. No `dict[str, Any]` across module boundaries.
-- Use `from __future__ import annotations` (Python 3.11) for forward reference support.
-
-### 10. Testable Without Patching
-- Services accept `httpx.AsyncClient` as a constructor argument or function parameter.
-- Tests pass a custom client that returns recorded responses.
-- No `unittest.mock.patch`. Patching breaks refactoring. Dependency injection keeps tests stable.
-
-### 11. Routers Stay Thin
-- A router does three things: validate input, call a service, return the response.
-- Target: every endpoint handler under 20 lines.
-- No business logic in routers. No retry loops. No logging configuration.
-
-### 12. Stateless
-- The service holds no in-memory state that survives a request.
-- Exception: monthly credit counters for Scrape.do / ScraperAPI are stored in a simple in-memory dict. On restart, counters reset. This is a conscious tradeoff.
-- No in-memory caching. If caching is needed, use an external layer.
-
-### 13. Consistent Response Shape
-- All errors share this exact format:
-  ```json
-  {
-    "detail": "Human-readable error",
-    "error_code": "FETCH_ANTI_BOT_EXHAUSTED",
-    "request_id": "uuid"
-  }
-  ```
-- Success responses are whatever the endpoint promises — no wrapping, no `"data"` envelope.
-
-### 14. One Concept Per Function
-- A function either **orchestrates** (calls other functions) or **does work** (makes an HTTP call, parses, formats). Never both.
-- `fetch_chain.execute()` orchestrates. `crawl4ai.fetch()` does work.
-
-### 15. Minimal Dependencies
-- Every package in `pyproject.toml` must justify its existence.
-- Core: FastAPI, uvicorn, httpx, pydantic. That's it.
-- No ORM, no DB driver, no Redis client at this stage.
-
-## Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| No custom provider rotation | LiteLLM router handles this. We deleted 1,250 lines from the old codebase. |
-| Cache follows SQLite-in-container pattern (not Redis) | Same approach as observability: zero external services, zero setup, persists via Docker volume. Graduate to Redis only if multi-instance. |
-| Crawl4AI transient retry before Jina fallback | Jina cannot render JS. Retrying Crawl4AI once on 5xx/timeout avoids degrading SPA pages that Crawl4AI can handle on retry. |
-| Quality gates before synthesis | Sources under 300 chars or detected paywall are skipped before synthesis. Better inputs = better answers. Filter is cheap (in-memory string checks). |
-| SSE streaming for synthesis only | Search/rerank/fetch are parallel phases — cannot stream. Only LLM synthesis tokens can be streamed. `synthesize_stream()` returns an async generator consumed by `StreamingResponse`. |
-| No `max_results` enforcement at proxy | LiteLLM passes it through, individual providers may ignore it. Client-side slicing if strict limits needed. |
-| Scrape.do before ScraperAPI | 98% success vs 61%. Higher credit efficiency. |
-| Jina Reader included even though `r.jina.ai` is free | With API key, rate limits go from 20 RPM → 500 RPM. Future-proofing for Jina Reranker etc. |
-| Anti-bot services quarantined — never invoked on general fetch failures | Scrape.do and ScraperAPI have limited monthly credits (1,000 each). Burning them on pages Crawl4AI or Jina can handle is wasteful. The fetch chain detects anti-bot blocks specifically (403 + Cloudflare indicators) and only then escalates to the firebreak tier. |
-| Crawl4AI as primary fetcher, not httpx+BeautifulSoup | Crawl4AI offers JS rendering, markdown output, undetected browser + stealth modes, and structured extraction. It replaces the old httpx + BeautifulSoup + FlareSolverr stack completely and eliminates the need for a FlareSolverr container. |
-| No FlareSolverr | Crawl4AI's undetected browser mode handles Cloudflare challenges more effectively than FlareSolverr's brute-force approach. FlareSolverr also required a separate Docker container. Removing it reduces complexity. |
-| No custom search provider rotation | LiteLLM search router provides cross-provider load balancing (`simple-shuffle`) and automatic fallback. The old `enhanced-websearch` had ~1,250 lines of custom rotation, cooldown, and failure tracking. Delegating to LiteLLM shrinks this to ~20 lines. |
-| No `max_results` enforcement at the proxy layer | LiteLLM passes `max_results` through to providers, but individual providers (Brave, Perplexity) may ignore it and return fixed batch sizes. The proxy normalizes responses but does not slice. Consumers that need strict limits must slice the results client-side. This is a documented behavior, not a bug. |
-| Image/video passthrough to upstream SearXNG | LiteLLM search routers handle web search only. SearXNG supports `categories=images` and `categories=videos`. Rather than return errors or silently ignore media categories (breaking Vane's image search), we passthrough directly to an upstream SearXNG instance. If `SEARXNG_URL` is not configured, we gracefully degrade to empty `results[]`. This adds ~20 lines of code and zero operational complexity. |
-| Endpoint names: `/compat/perplexity`, `/vane`, `/compat/searxng` | Compat endpoints are named after their external standard (`perplexity`, `searxng`). Native endpoints (`/vane`) are named after what they do. This reserves clean names (`/search`, `/research`) for future first-class implementations without breaking changes or versioning confusion. |
-| Open WebUI integration via OpenAPI auto-discovery, not custom tool | Open WebUI's OpenAPI (Function) Server automatically discovers endpoints, parameters, and schemas from `/openapi.json`. The old enhanced-websearch tool used a 400-line custom Python script with emit_status calls that never worked correctly. OpenAPI provides:
-  - Auto-updating tools when endpoints change (no manual file edits)
-  - Industry-standard compatibility across clients (not just Open WebUI)
-  - Zero Python code maintenance on the Open WebUI server
-  Behavioral guidance is still needed (when to call which endpoint) — this is handled by `skill.md` + `prompt.md`, not by custom tool code. |
-| Force OpenAPI 3.0.3, not 3.1.0 | FastAPI + Pydantic v2 defaults to OpenAPI 3.1.0, which represents `Optional[str]` as `anyOf: [{type: string}, {type: null}]`. Most MCP gateways (MCPHub) and tool-calling LLM clients (Open WebUI) cannot parse `anyOf` unions — they send malformed request bodies that FastAPI rejects with 422. OpenAPI 3.0.3 renders the same types as simple `{type: string, nullable: true}` or (with concrete defaults) just `{type: string}`. Additionally, all request-body fields that were `str | None` or `bool | None` are now concrete types with sensible defaults (`query: str = ""`, `stream: bool = False`). The model validator still enforces that at least `query` or `messages` is provided, so empty defaults don't bypass validation. |
-| MCPHub body-unwrap middleware | MCPHub auto-generates tool schemas from OpenAPI specs and wraps the request body under a `body` key (e.g., `{"body": {"query": "..."}}`). FastAPI expects request body fields at the top level of the JSON body (`{"query": "..."}`). The mismatch causes 422 Unprocessable Entity for every MCPHub-originated call. Rather than changing the route signatures (which would break direct HTTP callers) or requiring MCPHub configuration changes, we add a lightweight middleware that detects the single-key `body` wrapper and flattens it before routing. This is transparent to both direct HTTP callers and MCPHub clients. |
-| Observability via SQLite (in-container), not OpenObserve sidecar | OpenObserve was evaluated but rejected because: (1) it requires a second Docker container, violating the "no external containers" constraint; (2) its HTTP JSON ingest API needs auth credentials that complicate deployment; (3) its search UI is query-oriented, not traffic-shaped (request/response side-by-side). SQLite inside the single container is zero-config, zero auth, survives restarts via a Docker volume, and the custom `/logs` HTML UI is purpose-built for HTTP exchange inspection. Retention is configurable (default 7 days). Storage overhead is ~1–2KB per request. |
-
-## Open WebUI Integration
-
-Open WebUI discovers searchproxy tools automatically via its **OpenAPI (Function) Server** connection type. No custom Python tool file is needed. The model receives endpoint signatures, parameter types, and descriptions directly from the auto-generated `/openapi.json` spec.
-
-### Connection Setup
-
-Admin Panel → Settings → Connections → Add Connection → OpenAPI (Function) Server:
-- **URL:** `http://<searchproxy-host>:<port>/openapi.json`
-- **Auth:** Bearer token via `Authorization: Bearer <SEARCHPROXY_API_KEY>` header
-- searchproxy auto-generates the spec from FastAPI; all endpoints appear as auto-discovered tools
-
-### Supporting Files (`open-webui/`)
-
-Three files guide the model's *behavior*, not its plumbing:
-
-| File | Purpose |
-|------|---------|
-| `skill.md` | Defines *when* to call which endpoint: quick lookup (`/compat/perplexity`), deep research (`/vane`), or fetch a URL (`/fetch`). |
-| `prompt.md` | System prompt preset establishing the model's identity as a research assistant using searchproxy endpoints. |
-| `README.md` | User-facing setup guide: connect the OpenAPI server, attach the skill, and enable Native/Agentic Mode. |
-
-**No custom tool file is maintained.** OpenAPI provides full auto-discovery of endpoints, parameters, and return schemas.
+* **SQLite Observability (`/logs`, `/api/logs`):** Embedded SQLite database recording every request, response status, latency, fetch tier, and tokens with 7-day automatic retention.
+* **Prometheus Metrics (`/metrics`):** Standard Prometheus counters and histograms for request latency, fetch tier breakdown, and error rates.
+* **SQLite Result Caching (`/data/cache.db`):** Optional SHA256-keyed cache with configurable TTLs for search, fetch, rerank, and synthesis.

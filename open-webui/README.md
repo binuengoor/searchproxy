@@ -39,22 +39,19 @@ Start a new chat with your configured model. Try these in order:
 **Quick search** — should trigger a search tool:
 > "Who won the Champions League final in 2025?"
 
-**Deep research** — should trigger the Vane/research tool:
+**Deep research** — should trigger the `research` tool:
 > "Compare Qwen 3 32B vs Llama 4 70B for local self-hosted deployment"
 
-**URL fetch** — should trigger the fetch tool:
+**URL fetch** — should trigger the `fetch` tool:
 > "Summarize this page: https://example.com"
-
-**Media search** — should trigger SearXNG with categories:
-> "Find images of the 2025 Wimbledon trophy"
 
 ## How It Works
 
-**OpenAPI auto-discovery**: Open WebUI fetches `/openapi.json` from searchproxy and generates tool schemas automatically. The model sees endpoint names, parameters, and response schemas.
+**OpenAPI auto-discovery**: Open WebUI fetches `/openapi.json` from searchproxy and generates tool schemas automatically. The model sees endpoint names (`retrieve`, `research`, `fetch`), parameters, and response schemas.
 
-**Prompt + Skill split**: The `prompt.md` system prompt defines *identity and decision rules* — when to answer directly, when to search, when to go deep. The `skill.md` defines *endpoint-specific behavior* — parameter choices, anti-patterns, architecture context. This separation keeps the system prompt compact (important: Open WebUI duplicates it on every tool call in Agentic Mode, so shorter = fewer wasted tokens).
+**Prompt + Skill split**: The system prompt defines *identity and decision rules* — when to answer directly, when to search, when to go deep. The `skill.md` defines *endpoint-specific behavior* — parameter choices, anti-patterns, architecture context. This separation keeps the system prompt compact (important: Open WebUI duplicates it on every tool call in Agentic Mode, so shorter = fewer wasted tokens).
 
-**Why no tool names in the prompt**: The model receives tool definitions from the OpenAPI schema via the function-calling API. Repeating tool names in the prompt wastes tokens and breaks when endpoints change. The prompt describes *intent* (search / deep research / fetch / media); the model maps that to whatever tools are available.
+**Why no tool names in the prompt**: The model receives tool definitions from the OpenAPI schema via the function-calling API. Repeating tool names in the prompt wastes tokens and breaks when endpoints change. The prompt describes *intent* (retrieve / deep research / fetch); the model maps that to whatever tools are available.
 
 ## Troubleshooting
 
@@ -63,14 +60,13 @@ Start a new chat with your configured model. Try these in order:
 | No tool calls appear | Ensure Function Calling = Native for the model. Legacy mode doesn't support tools. |
 | "Connection refused" | Check `SEARCHPROXY_API_KEY` matches. Verify searchproxy host:port is reachable from Open WebUI. |
 | Empty search results | Check `LITELLM_SEARCH_URL` is configured and LiteLLM router is healthy. |
-| `/vane` returns error | Check `VANE_URL` is configured and Vane service is running. |
-| Model uses wrong tool | Re-paste the latest `prompt.md` — old prompts reference old tool names. |
+| Model uses wrong tool | Re-paste the latest `prompt-v3.md` — old prompts reference old tool names. |
 | Model over-calls tools | The prompt explicitly guards against this, but some models need the decision rules reinforced. Check that Native Mode is enabled (not prompt-injection mode). |
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `prompt.md` | System prompt — paste into model's system prompt field |
+| `prompt-v3.md` | Recommended system prompt — paste into model's system prompt field |
 | `skill.md` | Behavioral skill — endpoint semantics, parameters, anti-patterns |
 | `README.md` | This setup guide |

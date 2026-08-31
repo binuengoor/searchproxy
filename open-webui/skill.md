@@ -8,34 +8,25 @@ This skill works alongside the system prompt in `prompt.md`. The system prompt d
 
 The searchproxy gateway exposes these capabilities via OpenAPI. The model discovers exact tool names and parameters from the spec — below is the *semantic* map so the model knows *when* and *how* to use each.
 
-| Capability | Typical OpenAPI Name | Purpose | When to Use |
+| Capability | OpenAPI Name | Purpose | When to Use |
 |---|---|---|---|
-| **Web search** | `compat_perplexity` | Fast ranked search results (title, URL, snippet) | Factual lookups, current events, verification, grounding |
-| **Deep research** | `vane` | Synthesized report with inline citations | Complex questions, comparisons, analysis, multi-source synthesis |
-| **Fetch page** | `fetch` | Retrieve single URL as markdown | User-provided URLs, reading authoritative pages for detail |
-| **Firecrawl scrape** | `compat_firecrawl_v2_scrape` | Firecrawl v2-compatible scrape | When a client expects Firecrawl-shaped output (most users won't need this) |
-| **SearXNG search** | `compat_searxng` | SearXNG-compatible search with media support | Image/video search via `categories=images` or `categories=videos` |
+| **One-Shot Retrieval** | `retrieve` | Fast search → BGE rerank → fetch → citation synthesis (5–10s) | Factual lookups, current events, verification, quick research |
+| **Deep Research** | `research` | Native 2-hop query decomposition → parallel multi-search → comprehensive report (15–25s) | Complex multi-angle topics, deep comparisons, comprehensive technical/market reports |
+| **Fetch Page / PDF** | `fetch` | Retrieve single URL or PDF as clean markdown | User-provided URLs, reading authoritative pages in full |
 
 ## Key Parameters the Model Should Know
 
-### Web Search (`compat_perplexity`)
-- `query` (required): the search string. Be specific.
-- `max_results`: default 10. Increase only when breadth is needed.
+### Retrieve (`retrieve`)
+- `query` (required): search string.
+- `fetch_top_k`: default 8 (range 1–20). Controls how many diverse sources to extract and synthesize.
+- `include_domains` / `exclude_domains`: optional domain filters.
 
-### Deep Research (`vane`)
-- `query` (required): the research question.
-- `optimization_mode`: `balanced` (default) | `speed` | `quality`
-  - `speed` — quick pass, narrower scope
-  - `balanced` — most reports and comparisons
-  - `quality` — high-stakes, exhaustive research only
+### Deep Research (`research`)
+- `query` (required): research topic.
+- `fetch_top_k`: default 8 (range 3–15). Controls source depth for comprehensive report synthesis.
 
 ### Fetch (`fetch`)
-- `url` (required): the page to retrieve. Only use URLs the user provided or URLs from previous search results.
-
-### SearXNG (`compat_searxng`)
-- `q` (required): search query
-- `categories`: use `images` or `videos` for media results. Omit for general web search.
-- `format`: `json` (default) or `html`
+- `url` (required): page or document URL to retrieve. Support web pages and PDF links.
 
 ## Research Methodology
 

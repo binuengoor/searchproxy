@@ -2,6 +2,14 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.8.5] — 2026-08-30
+
+### Features & Architectural Modernization
+- **Native Python 2-Hop Deep Research (`POST /v1/research`)**: Replaced external Node.js/Next.js Vane dependency with a native, high-speed asynchronous research engine featuring query decomposition, parallel multi-search, neural candidate reranking, and structured report synthesis in 15–25s.
+- **Stack Streamlining**: Completely removed the external `vane` container and SQLite database from Compose and Dockhand, reducing stack RAM usage by ~350MB.
+- **Endpoint & Codebase Cleanup**: Deleted legacy `/vane` endpoints, removed deprecated `vane_proxy.py` client and configuration fields, and unified OpenAPI tool definitions (`retrieve`, `research`, `fetch`).
+- **Open WebUI Auto-Discovery**: Cleaned up Open WebUI tool server configurations and modernized system prompts to automatically leverage native 1-shot and 2-hop search capabilities.
+
 ## [0.8.4] — 2026-08-30
 
 ### Features & Infrastructure

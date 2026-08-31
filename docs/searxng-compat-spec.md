@@ -9,7 +9,7 @@ This document defines how `/compat/searxng` maps SearXNG requests/responses to/f
 | SearXNG Param | Type | Required | Mapped To | Notes |
 |---------------|------|----------|-----------|-------|
 | `q` | string | **Yes** | `query` | 1:1 pass-through |
-| `format` | string | **Yes** | — | Must be `"json"`. Other formats (`csv`, `rss`) return `400`. |
+| `format` | string | No | `format` | Supports `"json"` (default) and `"html"`. Other formats (`csv`, `rss`) return `400`. |
 | `categories` | string | No | — | **Ignored.** LiteLLM router decides categories based on query semantics. |
 | `engines` | string | No | — | **Ignored.** LiteLLM router handles engine selection internally. |
 | `language` | string | No | — | **Ignored.** LiteLLM providers handle locale internally. Could map to `country` in future. |
@@ -114,8 +114,8 @@ SearXNG consumers (n8n, LangChain, custom scripts) typically check for `result.g
 ## Unsupported SearXNG Features
 
 | Feature | Status | Rationale |
-|---------|--------|-----------|
-| HTML output | ❌ Not supported | This is a JSON API gateway only |
+|---|---|---|
+| HTML output (`format=html`) | ✅ Supported | Renders standalone dark-mode HTML or forwards to upstream SearXNG for media |
 | CSV format | ❌ Not supported | Return `400` |
 | RSS format | ❌ Not supported | Return `400` |
 | Pagination (`pageno > 1`) | ⚠️ Ignored | LiteLLM has no pagination |

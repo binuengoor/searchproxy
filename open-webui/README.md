@@ -60,13 +60,13 @@ Start a new chat with your configured model. Try these in order:
 | No tool calls appear | Ensure Function Calling = Native for the model. Legacy mode doesn't support tools. |
 | "Connection refused" | Check `SEARCHPROXY_API_KEY` matches. Verify searchproxy host:port is reachable from Open WebUI. |
 | Empty search results | Check `LITELLM_SEARCH_URL` is configured and LiteLLM router is healthy. |
-| Model uses wrong tool | Re-paste the latest `prompt-v3.md` — old prompts reference old tool names. |
+| Model uses wrong tool | Re-paste the latest `prompt.md` — old prompts reference old tool names. |
 | Model over-calls tools | The prompt explicitly guards against this, but some models need the decision rules reinforced. Check that Native Mode is enabled (not prompt-injection mode). |
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `prompt-v3.md` | Recommended system prompt — paste into model's system prompt field |
+| `prompt.md` | System prompt — paste into model's system prompt field |
 | `skill.md` | Behavioral skill — endpoint semantics, parameters, anti-patterns |
 | `README.md` | This setup guide |

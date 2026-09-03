@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.dependencies import get_litellm_client, get_retrieve_service
+from app.dependencies import get_retrieve_service, get_search_router
 from app.schemas import MessageItem
-from app.services.litellm_search import LiteLLMSearchClient, SearchResponse
 from app.services.retrieve_service import RetrieveService
+from app.services.search import SearchResponse, SearchRouter
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="", tags=["search"])
@@ -90,7 +90,7 @@ class PerplexityQuery(BaseModel):
 )
 async def compat_perplexity(
     body: PerplexityQuery,
-    client: Annotated[LiteLLMSearchClient, Depends(get_litellm_client)],
+    client: Annotated[SearchRouter, Depends(get_search_router)],
 ) -> SearchResponse:
     """Compatibility endpoint for Open WebUI / Perplexity clients.
 
@@ -116,7 +116,7 @@ async def compat_perplexity(
 )
 async def openai_search_alias(
     body: PerplexityQuery,
-    client: Annotated[LiteLLMSearchClient, Depends(get_litellm_client)],
+    client: Annotated[SearchRouter, Depends(get_search_router)],
 ) -> SearchResponse:
     """Alias for /compat/perplexity — same request and response shape.
 

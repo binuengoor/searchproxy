@@ -23,7 +23,7 @@ Deep research tool that performs autonomous multi-hop query planning, parallel m
 
 **How it works:**
 1. **Query Decomposition:** Automatically expands the user query into 2–3 specialized sub-queries.
-2. **Parallel Sub-Search:** Queries LiteLLM search in parallel across all angles.
+2. **Parallel Sub-Search:** Queries search providers in parallel across all angles.
 3. **Neural Reranking & Diversity:** Merges candidates, applies domain diversity, and reranks via BGE.
 4. **Deep Extraction & Synthesis:** Reads top candidate pages (using Crawl4AI, Byparr, Tika) and writes an in-depth cited report.
 

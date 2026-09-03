@@ -5,8 +5,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient
 
-from app.services.litellm_search import LiteLLMSearchClient, SearchResponse, SearchResult
 from app.services.models import FetchResult
+from app.services.search import SearchResponse, SearchResult, SearchRouter
 
 
 # ---------------------------------------------------------------------------
@@ -15,10 +15,10 @@ from app.services.models import FetchResult
 
 @pytest.fixture
 def mock_litellm_search(monkeypatch):
-    """Replace LiteLLMSearchClient.search with a controllable mock."""
+    """Replace SearchRouter.search with a controllable mock."""
     mock = AsyncMock()
     monkeypatch.setattr(
-        "app.services.litellm_search.LiteLLMSearchClient.search",
+        "app.services.search.router.SearchRouter.search",
         mock,
     )
     return mock

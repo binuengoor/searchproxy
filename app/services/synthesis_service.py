@@ -1,4 +1,4 @@
-"""LLM synthesis service — builds prompts and calls LiteLLM chat for /v1/retrieve.
+"""LLM synthesis service — builds prompts and calls OpenAI-compatible chat endpoint for /v1/retrieve.
 
 Takes fetched source content and a query, produces a synthesized answer
 with inline [N] citations.
@@ -59,18 +59,18 @@ def _dynamic_max_tokens(sources: list[SourceChunk], base_max: int) -> int:
 
 
 class SynthesisService:
-    """Calls LiteLLM chat completions to synthesize an answer from sources."""
+    """Calls OpenAI-compatible chat completions to synthesize an answer from sources."""
 
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self._client = client
         self._settings = settings
 
     def _build_payload(self, query: str, sources: list[SourceChunk], stream: bool = False) -> dict:
-        """Build the LiteLLM chat payload (shared by sync and streaming paths)."""
+        """Build the chat payload (shared by sync and streaming paths)."""
         user_content = _build_user_content(query, sources)
         max_tokens = _dynamic_max_tokens(sources, self._settings.SYNTHESIS_MAX_TOKENS)
         return {
-            "model": self._settings.LITELLM_CHAT_MODEL,
+            "model": self._settings.LLM_CHAT_MODEL,
             "messages": [
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
@@ -99,8 +99,8 @@ class SynthesisService:
             return "No sources were available to synthesize an answer.", []
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
-        if self._settings.LITELLM_API_KEY:
-            headers["Authorization"] = f"Bearer {self._settings.LITELLM_API_KEY}"
+        if self._settings.LLM_API_KEY:
+            headers["Authorization"] = f"Bearer {self._settings.LLM_API_KEY}"
 
         payload = self._build_payload(query, sources, stream=False)
 
@@ -110,13 +110,13 @@ class SynthesisService:
             query,
             len(sources),
             total_chars,
-            self._settings.LITELLM_CHAT_MODEL,
+            self._settings.LLM_CHAT_MODEL,
             self._settings.SYNTHESIS_MAX_TOKENS,
         )
 
         try:
             response = await self._client.post(
-                self._settings.LITELLM_CHAT_URL,
+                self._settings.LLM_CHAT_URL,
                 json=payload,
                 headers=headers,
                 timeout=httpx.Timeout(self._settings.SYNTHESIS_TIMEOUT, connect=10.0),
@@ -153,7 +153,7 @@ class SynthesisService:
         query: str,
         sources: list[SourceChunk],
     ) -> AsyncIterator[str]:
-        """Stream synthesized answer tokens from LiteLLM (SSE format).
+        """Stream synthesized answer tokens from LLM (SSE format).
 
         Yields raw content tokens as they arrive from the LLM. The caller
         wraps these in SSE format.
@@ -165,8 +165,8 @@ class SynthesisService:
             return
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
-        if self._settings.LITELLM_API_KEY:
-            headers["Authorization"] = f"Bearer {self._settings.LITELLM_API_KEY}"
+        if self._settings.LLM_API_KEY:
+            headers["Authorization"] = f"Bearer {self._settings.LLM_API_KEY}"
 
         payload = self._build_payload(query, sources, stream=True)
 
@@ -174,14 +174,14 @@ class SynthesisService:
             "Streaming synthesis for query='%s' with %d sources (model=%s, max_tokens=%d)",
             query,
             len(sources),
-            self._settings.LITELLM_CHAT_MODEL,
+            self._settings.LLM_CHAT_MODEL,
             self._settings.SYNTHESIS_MAX_TOKENS,
         )
 
         try:
             async with self._client.stream(
                 "POST",
-                self._settings.LITELLM_CHAT_URL,
+                self._settings.LLM_CHAT_URL,
                 json=payload,
                 headers=headers,
                 timeout=httpx.Timeout(self._settings.SYNTHESIS_TIMEOUT, connect=10.0),

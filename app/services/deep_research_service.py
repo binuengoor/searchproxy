@@ -22,7 +22,7 @@ import httpx
 from app.config import Settings
 from app.schemas import Citation, RetrieveResponse, SourceChunk
 from app.services.fetch_chain import FetchChain
-from app.services.litellm_search import LiteLLMSearchClient
+from app.services.search import SearchRouter
 from app.services.rerank_service import RerankService
 from app.services.retrieve_steps import (
     budget_step,
@@ -66,7 +66,7 @@ class DeepResearchService:
 
     def __init__(
         self,
-        search_client: LiteLLMSearchClient,
+        search_client: SearchRouter,
         rerank_service: RerankService,
         fetch_chain: FetchChain,
         synthesis_service: SynthesisService,
@@ -83,12 +83,12 @@ class DeepResearchService:
     async def decompose_query(self, query: str) -> list[str]:
         """Generate 2-3 sub-queries for broad multi-angle coverage."""
         sub_queries = [query]
-        if not self._settings.LITELLM_CHAT_URL:
+        if not self._settings.LLM_CHAT_URL:
             return sub_queries
 
         try:
             payload = {
-                "model": self._settings.LITELLM_CHAT_MODEL,
+                "model": self._settings.LLM_CHAT_MODEL,
                 "messages": [
                     {"role": "system", "content": _DECOMPOSE_SYSTEM_PROMPT},
                     {"role": "user", "content": f"Topic: {query}"},
@@ -97,9 +97,9 @@ class DeepResearchService:
                 "max_tokens": 200,
             }
             resp = await self._http.post(
-                self._settings.LITELLM_CHAT_URL,
+                self._settings.LLM_CHAT_URL,
                 json=payload,
-                headers={"Authorization": f"Bearer {self._settings.LITELLM_API_KEY}"} if self._settings.LITELLM_API_KEY else {},
+                headers={"Authorization": f"Bearer {self._settings.LLM_API_KEY}"} if self._settings.LLM_API_KEY else {},
                 timeout=10.0,
             )
             if resp.status_code == 200:
@@ -234,10 +234,10 @@ class DeepResearchService:
 
     async def _synthesize_report(self, query: str, sources: list[SourceChunk]) -> tuple[str, list[Citation]]:
         """Call LLM with deep research prompt structure."""
-        if not self._settings.LITELLM_CHAT_URL:
+        if not self._settings.LLM_CHAT_URL:
             # Fallback
-            from app.services.synthesis_service import _fallback_answer, _build_citations
-            return _fallback_answer(sources), _build_citations(sources)
+            from app.services.synthesis_service import _fallback_answer, _extract_citations
+            return _fallback_answer(sources), _extract_citations(sources)
 
         parts = [f"Research Query: {query}\n\nSources:\n"]
         for i, src in enumerate(sources, start=1):
@@ -246,7 +246,7 @@ class DeepResearchService:
         user_content = "\n".join(parts)
 
         payload = {
-            "model": self._settings.LITELLM_CHAT_MODEL,
+            "model": self._settings.LLM_CHAT_MODEL,
             "messages": [
                 {"role": "system", "content": _DEEP_SYNTHESIS_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
@@ -257,9 +257,9 @@ class DeepResearchService:
 
         try:
             resp = await self._http.post(
-                self._settings.LITELLM_CHAT_URL,
+                self._settings.LLM_CHAT_URL,
                 json=payload,
-                headers={"Authorization": f"Bearer {self._settings.LITELLM_API_KEY}"} if self._settings.LITELLM_API_KEY else {},
+                headers={"Authorization": f"Bearer {self._settings.LLM_API_KEY}"} if self._settings.LLM_API_KEY else {},
                 timeout=self._settings.SYNTHESIS_TIMEOUT,
             )
             if resp.status_code == 200:
@@ -272,5 +272,5 @@ class DeepResearchService:
         except Exception as exc:
             log.warning("Deep synthesis call failed: %s", exc)
 
-        from app.services.synthesis_service import _fallback_answer, _build_citations
-        return _fallback_answer(sources), _build_citations(sources)
+        from app.services.synthesis_service import _fallback_answer, _extract_citations
+        return _fallback_answer(sources), _extract_citations(sources)

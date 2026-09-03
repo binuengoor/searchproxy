@@ -12,7 +12,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.schemas import Citation
-from app.services.litellm_search import SearchResponse, SearchResult
+from app.services.search import SearchResponse, SearchResult
 from app.services.rerank_service import RerankResult
 
 
@@ -42,9 +42,9 @@ class MockFetchResult:
 
 @pytest.fixture
 def mock_search(monkeypatch):
-    """Replace LiteLLMSearchClient.search with a controllable mock."""
+    """Replace SearchRouter.search with a controllable mock."""
     mock = AsyncMock()
-    monkeypatch.setattr("app.services.litellm_search.LiteLLMSearchClient.search", mock)
+    monkeypatch.setattr("app.services.search.router.SearchRouter.search", mock)
     return mock
 
 

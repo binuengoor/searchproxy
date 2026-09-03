@@ -12,18 +12,22 @@ so caching is safe and deterministic.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import httpx
+from pydantic import BaseModel
 
 from app.config import Settings
+from app.services.local_reranker import LocalReranker
+
+if TYPE_CHECKING:
+    from app.services.cache import CacheService
 
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class RerankResult:
-    """A single reranked result with its relevance score."""
+class RerankResult(BaseModel):
+    """Normalized reranker result."""
 
     index: int
     relevance_score: float
@@ -31,21 +35,23 @@ class RerankResult:
 
 
 class RerankService:
-    """Async client for the BGE reranker on cf-inference.
+    """Reranker orchestrating local ONNX cross-encoder with cf-inference remote fallback.
 
-    If the rerank call fails (timeout, HTTP error, parse failure), the
-    service returns None so the caller can fall back to original ordering.
+    If both local and remote fail, the service returns None so the caller can fall
+    back to original ordering.
     """
 
     def __init__(
         self,
         client: httpx.AsyncClient,
         settings: Settings,
-        cache: "CacheService | None" = None,
+        cache: CacheService | None = None,
+        local_reranker: LocalReranker | None = None,
     ) -> None:
         self._client = client
         self._settings = settings
         self._cache = cache
+        self._local_reranker = local_reranker if local_reranker is not None else LocalReranker(settings=settings)
 
     async def rerank(
         self,
@@ -76,7 +82,35 @@ class RerankService:
                 except Exception as exc:
                     log.warning("Rerank cache deserialization failed for '%s': %s", query, exc)
 
+        # ── Primary: Local ONNX Cross-Encoder ─────────────────────────
+        if self._settings.RERANK_LOCAL:
+            try:
+                log.info("Reranking %d documents locally with ONNX for query '%s'", len(documents), query)
+                scores = await self._local_reranker.rerank(query, documents)
+                indexed_scores = [(i, score, doc) for i, (score, doc) in enumerate(zip(scores, documents))]
+                indexed_scores.sort(key=lambda x: x[1], reverse=True)
+                if top_k is not None:
+                    indexed_scores = indexed_scores[:top_k]
+
+                results = [
+                    RerankResult(index=i, relevance_score=score, text=doc)
+                    for i, score, doc in indexed_scores
+                ]
+                log.info("Local ONNX reranker returned %d results for query '%s'", len(results), query)
+
+                if self._cache is not None and results:
+                    cache_data = [{"index": r.index, "relevance_score": r.relevance_score, "text": r.text} for r in results]
+                    await self._cache.set_rerank(query, documents, cache_data)
+
+                return results
+            except Exception as exc:
+                log.warning("Local ONNX reranker failed for query '%s': %s; falling back to remote", query, exc)
+
+        # ── Secondary: Remote cf-inference fallback ──────────────────
         url = self._settings.CF_RERANK_URL
+        if not url:
+            log.warning("No remote CF_RERANK_URL configured; falling back to original search order")
+            return None
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._settings.CF_RERANK_API_KEY:
             headers["Authorization"] = f"Bearer {self._settings.CF_RERANK_API_KEY}"
@@ -121,18 +155,18 @@ class RerankService:
             log.warning("Reranker returned empty results for query '%s'", query)
             return None
 
-        results: list[RerankResult] = []
+        remote_results: list[RerankResult] = []
         for item in raw_results:
             idx = item.get("index", 0)
             score = item.get("relevance_score", 0.0)
             text = item.get("document", {}).get("text", "")
-            results.append(RerankResult(index=idx, relevance_score=score, text=text))
+            remote_results.append(RerankResult(index=idx, relevance_score=score, text=text))
 
-        log.info("Reranker returned %d results for query '%s'", len(results), query)
+        log.info("Reranker returned %d results for query '%s'", len(remote_results), query)
 
         # ── Cache write ───────────────────────────────────────────────
-        if self._cache is not None and results:
-            cache_data = [{"index": r.index, "relevance_score": r.relevance_score, "text": r.text} for r in results]
+        if self._cache is not None and remote_results:
+            cache_data = [{"index": r.index, "relevance_score": r.relevance_score, "text": r.text} for r in remote_results]
             await self._cache.set_rerank(query, documents, cache_data)
 
-        return results
+        return remote_results

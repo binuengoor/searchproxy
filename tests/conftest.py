@@ -17,7 +17,7 @@ def reset_dependencies(monkeypatch):
     import app.dependencies as deps
     deps._cache_service = None
     deps._fetch_chain = None
-    deps._litellm_client = None
+    deps._search_router = None
     deps._rerank_service = None
     deps._synthesis_service = None
     deps._retrieve_service = None

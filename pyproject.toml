@@ -14,6 +14,7 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "python-dotenv>=1.0.0",
     "trafilatura>=1.12.0",
+    "fastembed>=0.8.0",
 ]
 
 [project.optional-dependencies]
@@ -39,5 +40,5 @@ line-length = 100
 select = ["E", "F", "I", "W"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true

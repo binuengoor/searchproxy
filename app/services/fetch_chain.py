@@ -17,6 +17,7 @@ from app.services.models import FetchResult
 from app.services.byparr_client import ByparrClient
 from app.services.tika_client import TikaClient
 from app.services.crawl4ai import Crawl4AIClient
+from app.services.fast_fetch_client import FastFetchClient
 from app.middleware.correlation import _current_correlation_id
 from app.services.metrics import get_collector
 from app.services.jina_reader import JinaReaderClient
@@ -46,7 +47,7 @@ def _is_anti_bot_block(status_code: int | None, body: str) -> bool:
 
 
 class FetchChain:
-    """Orchestrates the tiered fetch chain: Crawl4AI → Jina Reader → Byparr → anti-bot firebreak.
+    """Orchestrates the tiered fetch chain: FastFetch → Crawl4AI → Jina Reader → Byparr → anti-bot firebreak.
 
     Anti-bot services (Byparr, Scrape.do, ScraperAPI) are only invoked when a response
     is a confirmed anti-bot block (403 or Cloudflare indicators in body).
@@ -62,6 +63,7 @@ class FetchChain:
         self._client = client
         self._settings = settings
         self._cache = cache
+        self._fast_fetch = FastFetchClient(client=client, settings=settings)
         self._crawl4ai = Crawl4AIClient(client=client, settings=settings)
         self._jina = JinaReaderClient(client=client, settings=settings)
         self._byparr = ByparrClient(client=client, settings=settings)
@@ -158,6 +160,23 @@ class FetchChain:
                         return tika_result
             except Exception as exc:
                 log.warning("Tika direct PDF extraction failed for %s: %s", url, exc)
+
+        # ── Tier 0: FastFetch (Direct HTTP + Trafilatura) ───────────────
+        if self._settings.FAST_FETCH_ENABLED:
+            fast_res = await self._fast_fetch.fetch(url)
+            if fast_res.success:
+                log.info("FastFetch succeeded for %s", url)
+                get_collector().inc_tier("http_fast", "success")
+                fast_res.fetch_time_ms = self._elapsed_ms(start_time)
+                await self._store_fetch(url, fast_res)
+                return fast_res
+            if self._is_anti_bot(fast_res):
+                if skip_firebreak:
+                    log.info("FastFetch anti-bot for %s but skip_firebreak=True; returning failure", url)
+                    fast_res.fetch_time_ms = self._elapsed_ms(start_time)
+                    return fast_res
+                log.info("FastFetch anti-bot detected for %s; escalating to firebreak", url)
+                return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
 
         # ── Tier 1: Crawl4AI (with 1 transient retry) ────────────────────
         result = await self._crawl4ai.fetch_markdown(

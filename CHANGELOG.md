@@ -2,6 +2,32 @@
 
 All notable changes to SearchProxy will be documented in this file.
 
+## [0.9.0] — 2026-09-02
+
+### Native Search Providers & LiteLLM Decoupling
+- **Direct Search Providers**: Implemented native API adapters for Tavily, Brave Search, Exa AI, Serper, and SearXNG under `app/services/search/providers/`.
+- **`SearchRouter` with Multi-Provider Quota Rotation & Circuit Breaking**:
+  - Automatically discovers all available Tier 1 providers from configured API keys.
+  - Rotates requests evenly via round-robin across active free quotas to burn quotas responsibly.
+  - Automatically trips circuit breakers on HTTP 429 (rate limited / quota exhausted) and fails over immediately to the next provider.
+  - Places local SearXNG as the Tier 2 safety net, only invoked when external free quotas fail or are exhausted, protecting local IP addresses from rate-limits.
+  - Transparently integrates SQLite caching (`cache.db`) before invoking search providers.
+- **Decoupled OpenAI-Compatible AI Inference**:
+  - Standardized synthesis and deep research reasoning on `LLM_CHAT_URL`, `LLM_CHAT_MODEL`, and `LLM_API_KEY`.
+  - Enables direct drop-in connection to any low-latency inference gateway (Groq, Cerebras, Cloudflare Workers AI, OpenRouter, etc.).
+- **Tier 0 Fast-Fetch (`app/services/fast_fetch_client.py`)**:
+  - Implemented direct HTTP GET with Trafilatura text extraction as Tier 0 in `FetchChain`.
+  - Static web pages return in ~40ms with ~5ms CPU time, completely bypassing Crawl4AI and saving 500–1,500ms while keeping headless Chromium idle.
+  - Automatically falls through to Crawl4AI and Byparr if anti-bot blocks (403/Cloudflare) or SPAs (<300 chars) are detected.
+- **Local ONNX Cross-Encoder Reranker (`app/services/local_reranker.py`)**:
+  - Integrated `fastembed` running quantized cross-encoder models (`BAAI/bge-reranker-base`) in memory.
+  - Executes candidate scoring locally in ~15–25ms via worker thread pool (`asyncio.to_thread`), taking advantage of CPU AVX-512 VNNI instructions.
+  - Retains Cloudflare Workers AI as a secondary fallback if local ONNX is disabled or weights are uninitialized.
+- **Complete LiteLLM Clean Break**:
+  - Deleted `LiteLLMSearchClient` and `app/services/litellm_search.py`.
+  - Ripped out all legacy `LITELLM_*` configuration settings.
+- **Test Suite Expansion**: Added unit and integration tests for all search providers, router failover, fast-fetch, and local reranking (140 total tests passing).
+
 ## [0.8.5] — 2026-08-30
 
 ### Features & Architectural Modernization

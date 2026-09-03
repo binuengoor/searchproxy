@@ -14,7 +14,7 @@ from app.clients import get_client
 from app.config import settings
 from app.services.cache import CacheService
 from app.services.fetch_chain import FetchChain
-from app.services.litellm_search import LiteLLMSearchClient
+from app.services.search import SearchRouter
 from app.services.rerank_service import RerankService
 from app.services.retrieve_service import RetrieveService
 from app.services.deep_research_service import DeepResearchService
@@ -24,7 +24,7 @@ from app.services.synthesis_service import SynthesisService
 _lock = threading.RLock()
 _cache_service: CacheService | None = None
 _fetch_chain: FetchChain | None = None
-_litellm_client: LiteLLMSearchClient | None = None
+_search_router: SearchRouter | None = None
 _rerank_service: RerankService | None = None
 _synthesis_service: SynthesisService | None = None
 _retrieve_service: RetrieveService | None = None
@@ -52,14 +52,14 @@ def get_fetch_chain() -> FetchChain:
     return _fetch_chain
 
 
-def get_litellm_client() -> LiteLLMSearchClient:
-    """Return the shared LiteLLMSearchClient singleton (thread-safe lazy init)."""
-    global _litellm_client
-    if _litellm_client is None:
+def get_search_router() -> SearchRouter:
+    """Return the shared SearchRouter singleton (thread-safe lazy init)."""
+    global _search_router
+    if _search_router is None:
         with _lock:
-            if _litellm_client is None:
-                _litellm_client = LiteLLMSearchClient(client=get_client(), settings=settings, cache=_get_cache())
-    return _litellm_client
+            if _search_router is None:
+                _search_router = SearchRouter(client=get_client(), settings=settings, cache=_get_cache())
+    return _search_router
 
 
 def get_rerank_service() -> RerankService:
@@ -89,7 +89,7 @@ def get_retrieve_service() -> RetrieveService:
         with _lock:
             if _retrieve_service is None:
                 _retrieve_service = RetrieveService(
-                    search_client=get_litellm_client(),
+                    search_client=get_search_router(),
                     fetch_chain=get_fetch_chain(),
                     rerank_service=get_rerank_service(),
                     synthesis_service=get_synthesis_service(),
@@ -106,7 +106,7 @@ def get_searxng_service() -> SearxngCompatService:
         with _lock:
             if _searxng_service is None:
                 _searxng_service = SearxngCompatService(
-                    litellm_client=get_litellm_client(),
+                    search_client=get_search_router(),
                     http_client=get_client(),
                     settings=settings,
                 )
@@ -120,7 +120,7 @@ def get_deep_research_service() -> DeepResearchService:
         with _lock:
             if _deep_research_service is None:
                 _deep_research_service = DeepResearchService(
-                    search_client=get_litellm_client(),
+                    search_client=get_search_router(),
                     rerank_service=get_rerank_service(),
                     fetch_chain=get_fetch_chain(),
                     synthesis_service=get_synthesis_service(),

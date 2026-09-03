@@ -19,24 +19,46 @@ class Settings(BaseSettings):
     SEARCHPROXY_REQUIRE_AUTH: bool = Field(default=False)
     SEARCHPROXY_API_KEY: str = "change-me-in-production"
 
-    # --- Compat: Perplexity / OpenAI ---
-    LITELLM_SEARCH_URL: str = Field(default="http://litellm-host:4000/search/unifiedsearch")
-    LITELLM_API_KEY: str | None = Field(default=None)
-
-    # --- Retrieve: LiteLLM Chat (synthesis) ---
-    LITELLM_CHAT_URL: str = Field(
-        default="http://host.docker.internal:4000/v1/chat/completions",
-        description="LiteLLM chat completions endpoint for /v1/retrieve synthesis.",
-    )
-    LITELLM_CHAT_MODEL: str = Field(
-        default="openai/gpt-4o-mini",
-        description="LiteLLM model name for synthesis. Must match a model available on your LiteLLM proxy.",
+    # --- Search Providers (Tier 1: Free Quotas) ---
+    TAVILY_API_KEY: str | None = Field(default=None, description="Tavily Search API key.")
+    BRAVE_API_KEY: str | None = Field(default=None, description="Brave Search API key.")
+    EXA_API_KEY: str | None = Field(default=None, description="Exa AI Search API key.")
+    SERPER_API_KEY: str | None = Field(default=None, description="Serper Google Search API key.")
+    SEARCH_COOLDOWN_SECONDS: int = Field(
+        default=900,
+        description="Cooldown in seconds when a search provider returns 429 or fails.",
     )
 
-    # --- Retrieve: BGE Reranker (cf-inference) ---
-    CF_RERANK_URL: str = Field(
+    # --- Synthesis / AI Inference: OpenAI-Compatible Chat Gateway ---
+    LLM_CHAT_URL: str = Field(
+        default="https://api.groq.com/openai/v1/chat/completions",
+        description="OpenAI-compatible chat completions endpoint for synthesis.",
+    )
+    LLM_CHAT_MODEL: str = Field(
+        default="llama-3.3-70b-versatile",
+        description="Model name for synthesis on the OpenAI-compatible chat gateway.",
+    )
+    LLM_API_KEY: str | None = Field(
+        default=None,
+        description="API key for the OpenAI-compatible chat endpoint.",
+    )
+
+    # --- Retrieve: Reranker (Local ONNX primary, CF secondary) ---
+    RERANK_LOCAL: bool = Field(
+        default=True,
+        description="Enable local ONNX cross-encoder reranking.",
+    )
+    LOCAL_RERANK_MODEL: str = Field(
+        default="BAAI/bge-reranker-base",
+        description="Local fastembed cross-encoder model name.",
+    )
+    FASTEMBED_CACHE_PATH: str = Field(
+        default="/data/models",
+        description="Directory to cache local ONNX models.",
+    )
+    CF_RERANK_URL: str | None = Field(
         default="https://cf-inference.binuengoor.workers.dev/v1/rerank",
-        description="BGE reranker endpoint (cf-inference /v1/rerank).",
+        description="BGE reranker endpoint (cf-inference /v1/rerank) used as secondary fallback.",
     )
     CF_RERANK_API_KEY: str | None = Field(
         default=None,
@@ -97,8 +119,21 @@ class Settings(BaseSettings):
     CACHE_SYNTHESIS_TTL: int = Field(default=3600, description="TTL for synthesized answer cache entries in seconds.")
     CACHE_DB_PATH: str = Field(default="/data/cache.db", description="Path to SQLite cache database.")
 
-    # --- Compat: SearXNG passthrough ---
-    SEARXNG_URL: str | None = Field(default=None)
+    # --- Search: SearXNG Safety Net / Passthrough ---
+    SEARXNG_URL: str | None = Field(
+        default="http://searxng:8080/search",
+        description="SearXNG endpoint used as safety net and passthrough.",
+    )
+
+    # --- Fetch: Tier 0 Fast-Fetch (HTTP + Trafilatura) ---
+    FAST_FETCH_ENABLED: bool = Field(
+        default=True,
+        description="Enable Tier 0 direct HTTP fetch before browser scrapers.",
+    )
+    FAST_FETCH_TIMEOUT: float = Field(
+        default=4.0,
+        description="Timeout in seconds for Tier 0 fast fetch.",
+    )
 
     # --- Fetch: Crawl4AI ---
     CRAWL4AI_URL: str = Field(default="http://crawl4ai-host:11235")

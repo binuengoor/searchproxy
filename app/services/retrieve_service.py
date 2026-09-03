@@ -30,7 +30,7 @@ from fastapi import Request
 from app.config import Settings
 from app.schemas import Citation, RetrieveResponse, SourceChunk
 from app.services.fetch_chain import FetchChain
-from app.services.litellm_search import LiteLLMSearchClient
+from app.services.search import SearchRouter
 from app.services.rerank_service import RerankService
 from app.services.retrieve_steps import (
     budget_step,
@@ -59,7 +59,7 @@ class RetrieveService:
 
     def __init__(
         self,
-        search_client: LiteLLMSearchClient,
+        search_client: SearchRouter,
         fetch_chain: FetchChain,
         rerank_service: RerankService,
         synthesis_service: SynthesisService,

@@ -18,7 +18,7 @@ from app.config import Settings
 from app.schemas import SourceChunk
 from app.services.fetch_chain import FetchChain, _is_anti_bot_block
 from app.services.models import FetchResult
-from app.services.litellm_search import LiteLLMSearchClient
+from app.services.search import SearchRouter
 from app.services.rerank_service import RerankService
 
 log = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ async def check_disconnect(request: Request | None) -> None:
 
 
 async def search_step(
-    search_client: LiteLLMSearchClient,
+    search_client: SearchRouter,
     query: str,
     max_results: int,
 ) -> tuple[list[dict[str, str]], int]:

@@ -69,7 +69,7 @@ class RetrieveRequest(BaseModel):
     )
     max_results: int = Field(
         default=10, ge=1, le=50,
-        description="Number of search results to retrieve from LiteLLM before reranking.",
+        description="Number of search results to retrieve before reranking.",
     )
     fetch_top_k: int = Field(
         default=5, ge=1, le=10,

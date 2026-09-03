@@ -45,7 +45,7 @@ def _derive_source(path: str, response_body: str) -> str:
         except Exception:
             return ""
     if path in ("/compat/perplexity", "/v1/search"):
-        return "litellm"
+        return "search_router"
     if path == "/vane":
         return "vane"
     if path in ("/compat/searxng", "/compat/searxng/search"):

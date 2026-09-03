@@ -6,7 +6,7 @@ import httpx
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import Settings
-from app.services.litellm_search import LiteLLMSearchClient, SearchResponse
+from app.services.search import SearchResponse, SearchRouter
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class SearxngResult(BaseModel):
 class SearxngResponse(BaseModel):
     """SearXNG-compatible JSON response.
 
-    Includes all standard SearXNG fields. Extra fields that LiteLLM cannot
+    Includes all standard SearXNG fields. Extra fields that search providers cannot
     provide are returned as empty arrays.
     """
 
@@ -118,20 +118,20 @@ MEDIA_CATEGORIES = frozenset(("images", "videos"))
 
 
 class SearxngCompatService:
-    """Bridge between SearXNG JSON API and the LiteLLM search relay.
+    """Bridge between SearXNG JSON API and SearchRouter.
 
     Thin orchestration: decides whether to passthrough to an upstream SearXNG
-    instance (media queries) or to normalize a LiteLLM response into the
+    instance (media queries) or to normalize a search response into the
     SearXNG format.
     """
 
     def __init__(
         self,
-        litellm_client: LiteLLMSearchClient,
+        search_client: SearchRouter,
         http_client: httpx.AsyncClient,
         settings: Settings,
     ) -> None:
-        self._litellm = litellm_client
+        self._search = search_client
         self._http = http_client
         self._settings = settings
         self._timeout = httpx.Timeout(
@@ -156,7 +156,7 @@ class SearxngCompatService:
         if self._should_passthrough(params):
             return await self._passthrough(params)
 
-        return await self._litellm_normalize(params)
+        return await self._search_normalize(params)
 
     async def _passthrough(self, params: SearxngParams) -> SearxngResponse:
         """Forward the request directly to the upstream SearXNG instance."""
@@ -238,9 +238,9 @@ class SearxngCompatService:
             unresponsive_engines=data.get("unresponsive_engines", []),
         )
 
-    async def _litellm_normalize(self, params: SearxngParams) -> SearxngResponse:
-        """Call LiteLLM search and normalize the response to SearXNG format."""
-        litellm_resp: SearchResponse = await self._litellm.search(
+    async def _search_normalize(self, params: SearxngParams) -> SearxngResponse:
+        """Call SearchRouter and normalize the response to SearXNG format."""
+        search_resp: SearchResponse = await self._search.search(
             query=params.q,
             max_results=params.max_results or 10,
         )
@@ -254,11 +254,11 @@ class SearxngCompatService:
                 score=0.0,
                 category="general",
             )
-            for r in litellm_resp.results
+            for r in search_resp.results
         ]
 
         log.info(
-            "Normalized %d LiteLLM results to SearXNG format for q='%s'",
+            "Normalized %d search results to SearXNG format for q='%s'",
             len(results),
             params.q,
         )

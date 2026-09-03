@@ -114,7 +114,7 @@ async def compat_searxng(
 
     For ``categories=images`` or ``categories=videos`` (if ``SEARXNG_URL`` is
     configured): passthrough to upstream SearXNG.
-    For all other queries: call LiteLLM search and normalize to SearXNG format.
+    For all other queries: call search router and normalize to SearXNG format.
 
     The ``format`` parameter accepts ``json`` (default) or ``html``.
     The ``limit`` parameter is an alias for ``max_results`` and controls how

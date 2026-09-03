@@ -1,6 +1,6 @@
 # SearchProxy Architecture
 
-Self-hosted AI search and deep research gateway. Built with FastAPI, SQLite observability, LiteLLM routing, BGE neural reranking, a 4-tier anti-bot fetch chain (with Byparr and Apache Tika), and a native Python 2-hop deep research engine.
+Self-hosted AI search and deep research gateway. Built with FastAPI, SQLite caching and observability, native multi-provider search rotation (Tavily, Brave, Exa, Serper, SearXNG), local in-memory ONNX neural reranking, a 5-tier fetch chain (FastFetch → Crawl4AI → Jina → Byparr → Anti-bot + Apache Tika), and a native Python 2-hop deep research engine.
 
 ---
 
@@ -12,22 +12,22 @@ Self-hosted AI search and deep research gateway. Built with FastAPI, SQLite obse
                           │                                                         │
                           │  ┌───────────────┐         ┌─────────────────────────┐  │
  [External Clients] ────► │  │  SearchProxy  │ ──────► │ Crawl4AI (:11235)        │  │
- (Open WebUI / Agents /   │  │  (:8080)      │         │ Primary JS & DOM Scraper│  │
-  LiteLLM / Tools)        │  └───────┬───────┘         └─────────────────────────┘  │
-                          │          │                                              │
-                          │          ├───────────────► ┌─────────────────────────┐  │
-                          │          │                 │ Byparr (:8191)          │  │
-                          │          │                 │ Cloudflare Solver Tier  │  │
-                          │          │                 └─────────────────────────┘  │
-                          │          │                                              │
-                          │          ├───────────────► ┌─────────────────────────┐  │
-                          │          │                 │ Apache Tika (:9998)     │  │
+ (Open WebUI / Pi Agent / │  │  (:8080)      │         │ Headless Chromium       │  │
+  SDKs / Agents / Tools)  │  │               │         └─────────────────────────┘  │
+                          │  │  • Search     │                                      │
+                          │  │    Router     │ ──────► ┌─────────────────────────┐  │
+                          │  │  • FastFetch  │         │ Byparr (:8191)          │  │
+                          │  │  • Local ONNX │         │ Cloudflare Solver Tier  │  │
+                          │  │    Reranker   │         └─────────────────────────┘  │
+                          │  └───────┬───────┘                                      │
+                          │          │                 ┌─────────────────────────┐  │
+                          │          ├───────────────► │ Apache Tika (:9998)     │  │
                           │          │                 │ PDF & Binary Doc Parser │  │
                           │          │                 └─────────────────────────┘  │
                           │          │                                              │
                           │          └───────────────► ┌─────────────────────────┐  │
                           │                            │ SearXNG (:8980)         │  │
-                          │                            │ Meta-Search Backend     │  │
+                          │                            │ Safety Net Search Tier  │  │
                           │                            └─────────────────────────┘  │
                           └─────────────────────────────────────────────────────────┘
                                      │
@@ -35,9 +35,12 @@ Self-hosted AI search and deep research gateway. Built with FastAPI, SQLite obse
                 ┌───────────────────────────────────────────────┐
                 │             Upstream Infrastructure           │
                 │                                               │
-                │  • LiteLLM Router (:4000) (Search & Synthesis)│
-                │  • Cloudflare Workers BGE Reranker            │
-                │  • Jina Reader API                            │
+                │  • Direct Search APIs (Tavily, Brave, Exa,    │
+                │    Serper) — Quota Rotated with 429 Failover  │
+                │  • OpenAI-Compatible LLM Gateway (Groq /      │
+                │    Cerebras / Cloudflare / OpenRouter)        │
+                │  • Cloudflare Workers BGE Reranker (Fallback) │
+                │  • Jina Reader API (Markdown Fallback)        │
                 │  • Scrape.do / ScraperAPI (Quarantined)       │
                 └───────────────────────────────────────────────┘
 ```
@@ -47,44 +50,47 @@ Self-hosted AI search and deep research gateway. Built with FastAPI, SQLite obse
 ## 2. Core Service Capabilities
 
 ### A. One-Shot Retrieval (`POST /v1/retrieve`)
-* **Latency:** 5–10s
+* **Latency:** 2–5s
 * **Pipeline:**
-  1. **Multi-Engine Search:** Dispatches queries to LiteLLM search router (Tavily, Brave, SearXNG, Exa).
+  1. **Native Multi-Provider Search:** Dispatches queries via `SearchRouter` rotating round-robin across active free quotas (Tavily, Brave, Exa, Serper) with automatic 429 failover to local SearXNG (Tier 2).
   2. **Deduplication & Domain Filtering:** Normalizes canonical URLs, enforces whitelists/blacklists, and caps results per domain (`MAX_PER_DOMAIN_SOURCES`).
-  3. **BGE Neural Reranking:** Scores candidates using `@cf/baai/bge-reranker-base` via Cloudflare Workers AI.
-  4. **Speculative Prefetching:** Pre-fetches top candidate URLs in parallel while reranking runs.
-  5. **Tiered Fetching:** Crawl4AI → Jina → Byparr → Paid Anti-bot + Tika for PDFs.
+  3. **Local ONNX Neural Reranking:** Scores candidates in ~15–25ms using quantized `BAAI/bge-reranker-base` via `fastembed` with hardware AVX-512 VNNI acceleration (with Cloudflare Workers AI fallback).
+  4. **Speculative Prefetching:** Pre-fetches top candidate URLs in parallel while reranking executes.
+  5. **Tiered Fetching:** FastFetch (HTTP + Trafilatura) → Crawl4AI → Jina → Byparr → Paid Anti-bot + Tika for PDFs.
   6. **Boilerplate Stripping:** Spam and cookie banner cleaning via `ContentCleaner` (20–60% token reduction).
-  7. **LLM Citation Synthesis:** Produces direct answer and key findings with inline `[N]` citations and streaming SSE support.
+  7. **OpenAI-Compatible LLM Synthesis:** Calls low-latency LPU endpoints (Groq, Cerebras, CF, OpenRouter) to produce structured responses with inline `[N]` citations and streaming SSE support.
 
 ### B. Native 2-Hop Deep Research (`POST /v1/research`)
 * **Latency:** 15–25s
 * **Pipeline:**
   1. **Query Decomposition (Hop 1):** Fast LLM call breaks down complex topics into 2–3 distinct search sub-queries.
-  2. **Parallel Sub-Search (Hop 2):** Dispatches concurrent searches across all angles and pools results.
+  2. **Parallel Sub-Search (Hop 2):** Dispatches concurrent searches across all angles using rotated search providers.
   3. **Candidate Deduplication & Domain Diversity:** Merges candidates and filters out domain clusters.
-  4. **Neural Reranking:** Scores the merged candidate pool against the original primary query.
+  4. **Local Neural Reranking:** Scores the merged candidate pool against the original primary query.
   5. **Deep Multi-Source Extraction:** Reads 6–8 diverse sources in parallel via `FetchChain`.
   6. **Comprehensive Report Synthesis:** Generates a structured multi-section cited report (Executive Summary, Detailed Analysis, Key Takeaways).
 
-### C. Multi-Tier Anti-Bot Fetch Chain (`POST /fetch`)
+### C. Multi-Tier Fetch Chain (`POST /fetch`)
 ```
 Target URL
   │
   ├── 0. PDF / Binary Document? ──► Apache Tika (Direct text extraction)
   │
-  ├── 1. Crawl4AI (Local Container) ──► Fast headless browser rendering
+  ├── 1. FastFetch (HTTP + Trafilatura) ──► Ultra-fast static HTML extraction (~40ms)
+  │      └── Anti-bot / SPA (<300 chars)? ──► Falls through to headless crawler
+  │
+  ├── 2. Crawl4AI (Local Container) ──► Fast headless browser rendering for SPAs
   │      ├── Success ──► Clean Markdown
   │      └── 5xx/Timeout? ──► Transient retry once after 1s
   │
-  ├── 2. Jina Reader ──► High-fidelity markdown fallback
+  ├── 3. Jina Reader ──► High-fidelity markdown fallback
   │      ├── Success ──► Clean Markdown
   │      └── 403 / Cloudflare Challenge detected? ──► Escalates to Byparr
   │
-  ├── 3. Byparr Cloudflare Solver ──► Automated local Turnstile & WAF challenge solver
+  ├── 4. Byparr Cloudflare Solver ──► Automated local Turnstile & WAF challenge solver
   │      └── Success ──► Clean Markdown
   │
-  └── 4. Anti-Bot Firebreak (Paid APIs) ──► Scrape.do → ScraperAPI (Quarantined credits)
+  └── 5. Anti-Bot Firebreak (Paid APIs) ──► Scrape.do → ScraperAPI (Quarantined credits)
 ```
 
 ---

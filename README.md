@@ -10,7 +10,7 @@ Self-hosted AI search & deep research gateway. High-speed 1-shot retrieval (`/v1
 
 | Tool | Endpoint | Purpose |
 |------|----------|---------|
-| **`retrieve`** | `POST /v1/retrieve` | **Fast 1-Shot Research (5–10s):** Multi-source LiteLLM search → BGE neural reranking → parallel fetch (Crawl4AI/Byparr/Tika) → structured citation synthesis with `[N]` inline citations. Supports SSE token streaming (`?stream=true`). |
+| **`retrieve`** | `POST /v1/retrieve` | **Fast 1-Shot Research (2–5s):** Native multi-provider search rotation → Local ONNX neural reranking (or CF fallback) → Tier 0 Fast-Fetch (HTTP + Trafilatura) / Crawl4AI → structured citation synthesis with `[N]` inline citations. Supports SSE token streaming (`?stream=true`). |
 | **`research`** | `POST /v1/research` | **Native 2-Hop Deep Research (15–25s):** Query decomposition into 2–3 focused sub-queries → parallel multi-search → candidate deduplication & domain diversity → BGE rerank → deep multi-source extraction → comprehensive cited research report. |
 | **`fetch`** | `POST /fetch` | **Direct Document & Page Reader:** Multi-tier fetch pipeline (Crawl4AI → Jina Reader → Byparr Cloudflare solver → Scrape.do/ScraperAPI + Apache Tika for PDFs/docs). Returns clean, spam-stripped markdown. |
 | **`health`** | `GET /health` | Liveness and readiness probe. |
@@ -126,20 +126,26 @@ curl -X POST http://localhost:8080/v1/research \
 ### 1. One-Shot Retrieval (`POST /v1/retrieve`)
 ```
 User Query
-  ├── LiteLLM Search (Tavily / Brave / SearXNG / Exa) ──► Raw Search Results
-  ├── Deduplicate by Canonical URL Hash
-  ├── Domain Filtering (include_domains / exclude_domains) & Diversity Capping
-  ├── Neural BGE Reranker ──► Scored & Ranked Candidates
-  ├── Parallel FetchChain (Crawl4AI → Jina → Byparr → Anti-bot + Tika for PDFs)
+  ├── Native Multi-Provider SearchRouter (Tavily / Brave / Exa / Serper)
+  │     └── Automatic 429 Failover ──► SearXNG Local Safety Net (Tier 2)
+  ├── Canonical URL Deduplication & Domain Diversity Filtering
+  ├── Neural Reranking: In-Memory Local ONNX (bge-reranker-base, ~20ms)
+  │     └── Graceful Fallback ──► Cloudflare Workers AI / Search Order
+  ├── Speculative Prefetch & Tiered FetchChain:
+  │     ├── Tier 0: FastFetch (Raw HTTP + Trafilatura, ~40ms)
+  │     ├── Tier 1: Crawl4AI (Headless Chromium for JS/DOM)
+  │     ├── Tier 2: Jina Reader Markdown Fallback
+  │     └── Tier 3: Byparr Cloudflare Solver & Anti-Bot Firebreak (+ Tika for PDFs)
   ├── Spam/Boilerplate Content Stripper (20-60% token reduction)
-  └── LLM Citation Synthesis ──► Sourced Response with [1], [2] Inline Citations
+  └── OpenAI-Compatible LLM Synthesis (Groq / Cerebras / CF / OpenRouter)
+        └── Sourced Response with [1], [2] Inline Citations & Lead Answer
 ```
 
 ### 2. Native 2-Hop Deep Research (`POST /v1/research`)
 ```
 User Deep Research Topic
   ├── Sub-Query Decomposition ──► Generates 2-3 focused sub-queries
-  ├── Parallel Multi-Search ──► Dispatches parallel queries across all angles
+  ├── Parallel Multi-Search ──► Dispatches parallel queries across rotated providers
   ├── Pool & Neural Rerank ──► Merges candidates & scores against root topic
   ├── Tiered Deep Extraction ──► Fetches top 6-8 diverse sources in parallel
   └── Comprehensive Report Synthesis ──► Executive Summary + Analysis + Takeaways
@@ -149,10 +155,11 @@ User Deep Research Topic
 ```
 Target URL / Document
   ├── PDF / Binary Document? ──► Apache Tika (Direct text/metadata extraction)
-  ├── 1. Crawl4AI (Local Container) ──► Fast headless browser rendering
-  ├── 2. Jina Reader ──► High-fidelity markdown fallback
-  ├── 3. Byparr Solver ──► Automated Cloudflare Turnstile & WAF challenge solver
-  └── 4. Anti-Bot Firebreak (Paid APIs) ──► Scrape.do & ScraperAPI (quarantined)
+  ├── Tier 0: FastFetch (Async HTTP + Trafilatura) ──► Ultra-fast static extraction (~40ms)
+  ├── Tier 1: Crawl4AI (Local Container) ──► Fast headless browser rendering for SPAs
+  ├── Tier 2: Jina Reader ──► High-fidelity markdown fallback
+  ├── Tier 3: Byparr Solver ──► Automated Cloudflare Turnstile & WAF challenge solver
+  └── Tier 4: Anti-Bot Firebreak (Paid APIs) ──► Scrape.do & ScraperAPI (quarantined)
 ```
 
 ---
@@ -165,14 +172,26 @@ Key environment variables in `.env`:
 |---|---|---|
 | `SEARCHPROXY_REQUIRE_AUTH` | `false` | Enable Bearer token authentication |
 | `SEARCHPROXY_API_KEY` | — | Secret API key for authentication |
-| `LITELLM_SEARCH_URL` | `http://host.docker.internal:4000/search/unifiedsearch` | LiteLLM search router endpoint |
-| `LITELLM_CHAT_URL` | `http://host.docker.internal:4000/v1/chat/completions` | LiteLLM chat completions endpoint |
-| `LITELLM_CHAT_MODEL` | `openai/gpt-4o-mini` | Model used for citation synthesis |
-| `CF_RERANK_URL` | `https://cf-inference.binuengoor.workers.dev/v1/rerank` | Cloudflare Workers BGE reranker endpoint |
-| `CF_RERANK_MODEL` | `@cf/baai/bge-reranker-base` | Neural reranking model identifier |
+| **Search Providers (Tier 1)** | | |
+| `TAVILY_API_KEY` | — | Tavily Search API key |
+| `BRAVE_API_KEY` | — | Brave Search API key |
+| `EXA_API_KEY` | — | Exa AI Search API key |
+| `SERPER_API_KEY` | — | Serper Google Search API key |
+| `SEARCH_COOLDOWN_SECONDS` | `900` | Cooldown duration on 429 rate limits |
+| `SEARXNG_URL` | `http://searxng:8080/search` | SearXNG container endpoint (Tier 2 safety net) |
+| **AI Inference Gateway** | | |
+| `LLM_CHAT_URL` | — | OpenAI-compatible chat completions endpoint (e.g. Groq, Cerebras, CF, OpenRouter) |
+| `LLM_CHAT_MODEL` | — | Model identifier (e.g. `qwen/qwen3.8-27b`, `llama-3.3-70b-versatile`) |
+| `LLM_API_KEY` | — | API key for LLM inference gateway |
+| **Neural Reranker** | | |
+| `RERANK_LOCAL` | `true` | Enable local in-memory ONNX cross-encoder reranking |
+| `LOCAL_RERANK_MODEL` | `BAAI/bge-reranker-base` | FastEmbed cross-encoder model name |
+| `FASTEMBED_CACHE_PATH` | `/data/models` | Persistent directory for cached ONNX models |
+| `CF_RERANK_URL` | — | Cloudflare Workers BGE reranker endpoint (secondary fallback) |
+| **Fetch & Extraction** | | |
+| `FAST_FETCH_ENABLED` | `true` | Enable Tier 0 HTTP + Trafilatura fast fetching |
+| `FAST_FETCH_TIMEOUT` | `4.0` | Timeout in seconds for Tier 0 fast fetch |
 | `CRAWL4AI_URL` | `http://crawl4ai:11235` | Internal Crawl4AI container endpoint |
 | `BYPARR_URL` | `http://byparr:8191/v1` | Internal Byparr Cloudflare solver endpoint |
 | `TIKA_URL` | `http://tika:9998/tika` | Internal Apache Tika parsing endpoint |
-| `SEARXNG_URL` | `http://searxng:8080/search` | Internal SearXNG container endpoint |
 | `MAX_PER_DOMAIN_SOURCES` | `2` | Maximum source documents from a single domain |
-| `ENABLE_SSRF_PROTECTION` | `true` | Block private IP range fetches |

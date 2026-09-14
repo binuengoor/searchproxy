@@ -160,6 +160,28 @@ class Settings(BaseSettings):
     SCRAPE_DO_API_KEY: str | None = Field(default=None)
     SCRAPERAPI_API_KEY: str | None = Field(default=None)
 
+    # --- Fetch: Specialized Domain (Reddit) ---
+    REDDIT_SESSION_COOKIE: str | None = Field(
+        default=None,
+        description="Optional reddit_session cookie for Reddit JSON API requests.",
+    )
+    REDDIT_COMMENT_LIMIT: int = Field(
+        default=25,
+        description="Max comments to fetch per thread.",
+    )
+    REDDIT_COMMENT_DEPTH: int = Field(
+        default=2,
+        description="Max comment tree recursion depth.",
+    )
+    REDDIT_CREDENTIAL_PATH: str | None = Field(
+        default=None,
+        description="Optional path to rdt-cli credential.json file.",
+    )
+    REDDIT_TIMEOUT: float = Field(
+        default=10.0,
+        description="Timeout in seconds for Reddit JSON API requests.",
+    )
+
     # --- Domain Diversity & Filtering ---
     MAX_PER_DOMAIN_SOURCES: int = Field(
         default=2,

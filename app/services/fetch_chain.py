@@ -23,6 +23,7 @@ from app.services.metrics import get_collector
 from app.services.jina_reader import JinaReaderClient
 from app.services.scraperapi import ScraperAPIClient
 from app.services.scrape_do import ScrapeDoClient
+from app.services.reddit_client import RedditClient
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ class FetchChain:
         self._tika = TikaClient(client=client, settings=settings)
         self._scrape_do = ScrapeDoClient(client=client, settings=settings)
         self._scraper_api = ScraperAPIClient(client=client, settings=settings)
+        self._reddit = RedditClient(client=client, settings=settings)
 
     def _is_anti_bot(self, result: FetchResult) -> bool:
         """Check if a FetchResult indicates an anti-bot block."""
@@ -160,6 +162,17 @@ class FetchChain:
                         return tika_result
             except Exception as exc:
                 log.warning("Tika direct PDF extraction failed for %s: %s", url, exc)
+
+        # ── Specialized Domain: Reddit Thread Extractor ─────────────
+        if self._reddit.is_reddit_url(url):
+            reddit_res = await self._reddit.fetch(url)
+            if reddit_res.success:
+                log.info("Reddit extractor succeeded for %s", url)
+                get_collector().inc_tier("reddit_json", "success")
+                reddit_res.fetch_time_ms = self._elapsed_ms(start_time)
+                await self._store_fetch(url, reddit_res)
+                return reddit_res
+            log.warning("Reddit extractor failed for %s: %s; escalating to standard tiers", url, reddit_res.error)
 
         # ── Tier 0: FastFetch (Direct HTTP + Trafilatura) ───────────────
         if self._settings.FAST_FETCH_ENABLED:

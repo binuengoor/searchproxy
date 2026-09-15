@@ -91,3 +91,33 @@ async def test_fetch_missing_url_returns_422(client, mock_fetch_chain):
     assert response.status_code == 422
     errors = response.json()["detail"]
     assert any("url" in str(e) for e in errors)
+
+
+@pytest.mark.anyio
+async def test_crawl4ai_client_bearer_token():
+    """Crawl4AIClient passes Authorization header when CRAWL4AI_API_TOKEN is set."""
+    import httpx
+    from unittest.mock import AsyncMock, MagicMock
+    from app.config import Settings
+    from app.services.crawl4ai import Crawl4AIClient
+
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"markdown": "# Test Content", "metadata": {"title": "Test"}}
+    mock_resp.raise_for_status = MagicMock()
+    mock_client.post.return_value = mock_resp
+
+    settings = Settings(
+        CRAWL4AI_URL="http://crawl4ai:11235",
+        CRAWL4AI_API_TOKEN="secret-test-token",
+    )
+    crawl_client = Crawl4AIClient(client=mock_client, settings=settings)
+    res = await crawl_client.fetch_markdown("https://example.com")
+
+    assert res.success is True
+    assert res.markdown == "# Test Content"
+    mock_client.post.assert_awaited_once()
+    _, kwargs = mock_client.post.call_args
+    assert kwargs["headers"] == {"Authorization": "Bearer secret-test-token"}
+

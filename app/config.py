@@ -137,6 +137,10 @@ class Settings(BaseSettings):
 
     # --- Fetch: Crawl4AI ---
     CRAWL4AI_URL: str = Field(default="http://crawl4ai-host:11235")
+    CRAWL4AI_API_TOKEN: str | None = Field(
+        default=None,
+        description="Bearer token for authenticating with Crawl4AI server (v0.9.3+ AuthGate).",
+    )
     CRAWL4AI_LLM_PROVIDER: str | None = Field(default=None)
     CRAWL4AI_LLM_BASE_URL: str | None = Field(default=None)
     CRAWL4AI_LLM_API_KEY: str | None = Field(default=None)

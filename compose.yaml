@@ -11,6 +11,7 @@ services:
       - .env
     environment:
       - CRAWL4AI_URL=http://crawl4ai:11235
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-crawl4ai-internal-key}
       - BYPARR_URL=http://byparr:8191/v1
       - TIKA_URL=http://tika:9998/tika
       - SEARXNG_URL=http://searxng:8080/search
@@ -33,6 +34,8 @@ services:
     container_name: searchproxy-crawl4ai
     ports:
       - "11235:11235"
+    environment:
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-crawl4ai-internal-key}
     restart: unless-stopped
     shm_size: 1g
 

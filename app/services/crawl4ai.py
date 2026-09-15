@@ -53,6 +53,10 @@ class Crawl4AIClient:
         if content_filter == "bm25" and content_query:
             body["q"] = content_query
 
+        headers: dict[str, str] | None = None
+        if self._settings.CRAWL4AI_API_TOKEN:
+            headers = {"Authorization": f"Bearer {self._settings.CRAWL4AI_API_TOKEN}"}
+
         return await safe_fetch(
             self._client,
             method="POST",
@@ -60,5 +64,6 @@ class Crawl4AIClient:
             source="crawl4ai",
             timeout=self._timeout,
             json_body=body,
+            headers=headers,
             check_403=True,
         )

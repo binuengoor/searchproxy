@@ -31,6 +31,10 @@ _REDDIT_GALLERY_PATTERN = re.compile(
     r"https?://(?:(?:www|old|new|np)\.)?reddit\.com/gallery/([a-z0-9]+)",
     re.IGNORECASE,
 )
+_REDDIT_SHARE_PATTERN = re.compile(
+    r"https?://(?:(?:www|old|new|np)\.)?reddit\.com/(?:r/[^/]+/)?s/([a-zA-Z0-9]+)",
+    re.IGNORECASE,
+)
 
 # Standard browser fingerprint headers (Chrome 133 / macOS)
 _BROWSER_HEADERS: dict[str, str] = {
@@ -67,6 +71,7 @@ class RedditClient:
             _REDDIT_THREAD_PATTERN.search(url)
             or _REDDIT_SHORT_PATTERN.search(url)
             or _REDDIT_GALLERY_PATTERN.search(url)
+            or _REDDIT_SHARE_PATTERN.search(url)
         )
 
     @staticmethod
@@ -113,7 +118,22 @@ class RedditClient:
 
     async def fetch(self, url: str) -> FetchResult:
         """Fetch post and comments from Reddit JSON API and format into Markdown."""
-        post_id = self.extract_post_id(url)
+        target_url = url
+        if _REDDIT_SHARE_PATTERN.search(url):
+            try:
+                resp = await self._client.get(
+                    url,
+                    headers=_BROWSER_HEADERS,
+                    follow_redirects=False,
+                    timeout=self._timeout,
+                )
+                loc = resp.headers.get("location")
+                if loc:
+                    target_url = loc
+            except Exception as exc:
+                log.warning("Failed resolving Reddit share URL %s: %s", url, exc)
+
+        post_id = self.extract_post_id(target_url)
         if not post_id:
             return FetchResult(
                 success=False,

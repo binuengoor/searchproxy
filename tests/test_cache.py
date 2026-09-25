@@ -5,14 +5,12 @@ All tests use an isolated temporary database to avoid side effects.
 from __future__ import annotations
 
 import asyncio
-import tempfile
 from pathlib import Path
 
 import pytest
 
 from app.config import Settings
 from app.services.cache import CacheService
-
 
 # ---------------------------------------------------------------------------
 # Fixture
@@ -204,3 +202,26 @@ async def test_cache_disabled_returns_none(tmp_path: Path):
     assert await svc.get_search("q", 5) is None
     assert (await svc.stats())["enabled"] is False
     await svc.clear()  # no-op, should not raise
+
+
+def test_cache_search_key_domain_and_freshness_normalization():
+    """Verify that equivalent domain formats and freshness aliases share the same cache key."""
+    key1 = CacheService._search_key(
+        "python", 10,
+        include_domains=["https://docs.python.org/3/"],
+        exclude_domains=["https://spam.com/"],
+        freshness="day",
+    )
+    key2 = CacheService._search_key(
+        "PYTHON ", 10,
+        include_domains=["docs.python.org"],
+        exclude_domains=["spam.com"],
+        freshness="24h",
+    )
+    key3 = CacheService._search_key(
+        "python", 10,
+        include_domains=["docs.python.org"],
+        exclude_domains=["spam.com"],
+        freshness="pd",
+    )
+    assert key1 == key2 == key3

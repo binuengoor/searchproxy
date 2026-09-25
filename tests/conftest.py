@@ -22,7 +22,7 @@ def reset_dependencies(monkeypatch):
     deps._synthesis_service = None
     deps._retrieve_service = None
     deps._searxng_service = None
-    deps._vane_client = None
+    deps._deep_research_service = None
 
 
 @pytest.fixture
@@ -33,6 +33,7 @@ async def client(monkeypatch, anyio_backend):
     Lifespan DI helpers never see an uninitialized state.
     """
     import httpx
+
     import app.clients
 
     # Real httpx client — enough for the DI layer, but routes mocked later
@@ -50,6 +51,7 @@ async def client(monkeypatch, anyio_backend):
 async def auth_client(monkeypatch, anyio_backend):
     """Authenticated test client (auth enabled)."""
     import httpx
+
     import app.clients
     import app.config
 

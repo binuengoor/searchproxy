@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+
 import httpx
 
 from app.config import Settings
-from app.services.content_cleaner import clean_content
 from app.services.models import FetchResult
 
 log = logging.getLogger(__name__)
@@ -77,15 +76,13 @@ class ByparrClient:
                     source="byparr",
                 )
 
-            markdown = clean_content(html_content, url=url, aggressive=True)
-            log.info("Byparr solved challenge for %s — extracted %d chars", url, len(markdown))
+            log.info("Byparr solved challenge for %s — extracted %d chars", url, len(html_content))
             return FetchResult(
                 success=True,
                 url=url,
                 status_code=solution.get("status", 200),
-                content=markdown,
+                markdown=html_content,
                 title="",
-                content_length=len(markdown),
                 source="byparr",
             )
         except httpx.TimeoutException:

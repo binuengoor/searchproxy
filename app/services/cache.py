@@ -15,11 +15,11 @@ import hashlib
 import json
 import logging
 import sqlite3
-import threading
 from pathlib import Path
 from typing import Any
 
 from app.config import Settings
+from app.services.search.base import normalize_domain, normalize_freshness
 from app.services.sqlite_base import SQLiteBase
 
 log = logging.getLogger(__name__)
@@ -67,18 +67,33 @@ class CacheService(SQLiteBase):
     # Public API
     # ------------------------------------------------------------------
 
-    async def get_search(self, query: str, max_results: int) -> Any | None:
+    async def get_search(
+        self,
+        query: str,
+        max_results: int,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+        freshness: str | None = None,
+    ) -> Any | None:
         """Get cached search result (SearchResponse JSON)."""
         if not self._enabled:
             return None
-        key = self._search_key(query, max_results)
+        key = self._search_key(query, max_results, include_domains, exclude_domains, freshness)
         return await asyncio.to_thread(self._get_sync, key)
 
-    async def set_search(self, query: str, max_results: int, value: Any) -> None:
+    async def set_search(
+        self,
+        query: str,
+        max_results: int,
+        value: Any,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+        freshness: str | None = None,
+    ) -> None:
         """Cache a search result."""
         if not self._enabled:
             return
-        key = self._search_key(query, max_results)
+        key = self._search_key(query, max_results, include_domains, exclude_domains, freshness)
         await asyncio.to_thread(self._set_sync, key, value, self._search_ttl)
 
     async def get_fetch(self, url: str) -> Any | None:
@@ -146,10 +161,32 @@ class CacheService(SQLiteBase):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _search_key(query: str, max_results: int) -> str:
-        """Normalize query and build a stable cache key."""
+    def _search_key(
+        query: str,
+        max_results: int,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+        freshness: str | None = None,
+    ) -> str:
+        """Normalize query, domains, and freshness to build a stable cache key."""
         normalized = " ".join(query.strip().lower().split())
-        digest = hashlib.sha256(f"{normalized}:{max_results}".encode()).hexdigest()[:16]
+        inc_str = ",".join(
+            sorted(
+                dict.fromkeys(
+                    normalize_domain(d) for d in (include_domains or []) if normalize_domain(d)
+                )
+            )
+        )
+        exc_str = ",".join(
+            sorted(
+                dict.fromkeys(
+                    normalize_domain(d) for d in (exclude_domains or []) if normalize_domain(d)
+                )
+            )
+        )
+        fresh_str = normalize_freshness(freshness) or ""
+        raw_key = f"{normalized}:{max_results}:{inc_str}:{exc_str}:{fresh_str}"
+        digest = hashlib.sha256(raw_key.encode()).hexdigest()[:16]
         return f"search:{digest}"
 
     @staticmethod

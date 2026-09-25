@@ -6,15 +6,14 @@ LiteLLM chat) are mocked so tests run without network.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import AsyncClient
 
 from app.schemas import Citation
-from app.services.search import SearchResponse, SearchResult
 from app.services.rerank_service import RerankResult
-
+from app.services.search import SearchResponse, SearchResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -679,4 +678,103 @@ async def test_retrieve_messages_wrapper(
     resp = await client.post("/v1/retrieve", json={"messages": [{"role": "user", "content": "When is next match?"}]})
     assert resp.status_code == 200
     assert resp.json()["query"] == "When is next match?"
+
+
+@pytest.mark.anyio
+async def test_retrieve_domain_and_freshness_forwarding(
+    client: AsyncClient,
+    mock_search: AsyncMock,
+    mock_rerank: AsyncMock,
+    mock_fetch: AsyncMock,
+    mock_synthesize: AsyncMock,
+):
+    """Retrieve forwards domain whitelist/blacklist and freshness to SearchRouter."""
+    mock_search.return_value = SearchResponse(results=[
+        SearchResult(
+            title="Python Docs",
+            url="https://docs.python.org/3/whatsnew",
+            snippet="Python new features",
+        ),
+        SearchResult(title="Spam Site", url="https://spam.com/article", snippet="Unwanted"),
+    ])
+    mock_rerank.return_value = [
+        RerankResult(index=0, relevance_score=0.95, text="Python new features")
+    ]
+    mock_fetch.return_value = MockFetchResult(
+        success=True,
+        url="https://docs.python.org/3/whatsnew",
+        markdown="What is new in Python 3.13... " * 15,
+        title="Python Docs",
+    )
+    mock_synthesize.return_value = (
+        "Python 3.13 added new features [1].",
+        [Citation(id=1, url="https://docs.python.org/3/whatsnew", title="Python Docs")],
+    )
+
+    resp = await client.post(
+        "/v1/retrieve",
+        json={
+            "query": "python 3.13 features",
+            "include_domains": ["python.org"],
+            "exclude_domains": ["spam.com"],
+            "freshness": "month",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["sources"]) == 1
+    assert "python.org" in data["sources"][0]["url"]
+
+    # Verify parameters were passed directly to SearchRouter
+    mock_search.assert_awaited_once_with(
+        query="python 3.13 features",
+        max_results=10,
+        include_domains=["python.org"],
+        exclude_domains=["spam.com"],
+        freshness="month",
+    )
+
+
+@pytest.mark.anyio
+async def test_retrieve_domain_filtering_edge_cases(
+    client: AsyncClient,
+    mock_search: AsyncMock,
+    mock_rerank: AsyncMock,
+    mock_fetch: AsyncMock,
+    mock_synthesize: AsyncMock,
+):
+    """Test domain filtering does not substring-match or fail on URL formats."""
+    mock_search.return_value = SearchResponse(results=[
+        SearchResult(title="Docs", url="https://docs.python.org/3", snippet="Subdomain"),
+        SearchResult(title="Bad Apple", url="https://badapple.com/scam", snippet="Bad"),
+        SearchResult(title="Legit", url="https://notquora.com/article", snippet="Legit"),
+    ])
+    mock_rerank.side_effect = lambda query, docs, top_k: [
+        RerankResult(index=i, relevance_score=0.9 - i * 0.1, text=docs[i])
+        for i in range(len(docs))
+    ]
+    mock_fetch.side_effect = lambda url, **kwargs: MockFetchResult(
+        success=True,
+        url=url,
+        markdown="Substantial valid content for article... " * 15,
+        title="Title",
+    )
+    mock_synthesize.return_value = (
+        "Answer [1].",
+        [Citation(id=1, url="https://docs.python.org/3", title="Docs")],
+    )
+
+    resp = await client.post(
+        "/v1/retrieve",
+        json={
+            "query": "test",
+            "include_domains": ["https://python.org/"],
+            "exclude_domains": ["quora.com"],
+        },
+    )
+    assert resp.status_code == 200
+    sources = resp.json()["sources"]
+    assert len(sources) == 1
+    assert sources[0]["url"] == "https://docs.python.org/3"
+
 

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
+
 import httpx
 
 from app.config import Settings
@@ -97,8 +99,8 @@ class FastFetchClient:
             title_match = _TITLE_RE.search(html)
             title = title_match.group(1).strip() if title_match else ""
 
-            # Extract markdown via Trafilatura
-            markdown = clean_content(html)
+            # Extract markdown via Trafilatura (offloaded to thread to avoid blocking event loop)
+            markdown = await asyncio.to_thread(clean_content, html)
             if not markdown or len(markdown) < self._settings.RETRIEVE_MIN_CONTENT_LENGTH:
                 log.info("FastFetch: Content too short (%d chars) for '%s' (likely SPA)", len(markdown), url)
                 return FetchResult(

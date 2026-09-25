@@ -18,8 +18,8 @@ from app.config import Settings
 from app.schemas import SourceChunk
 from app.services.fetch_chain import FetchChain, _is_anti_bot_block
 from app.services.models import FetchResult
-from app.services.search import SearchRouter
 from app.services.rerank_service import RerankService
+from app.services.search import SearchRouter
 
 log = logging.getLogger(__name__)
 
@@ -86,9 +86,22 @@ async def search_step(
     search_client: SearchRouter,
     query: str,
     max_results: int,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
+    freshness: str | None = None,
 ) -> tuple[list[dict[str, str]], int]:
-    log.info("Retrieve pipeline: search for '%s' (max_results=%d)", query, max_results)
-    search_resp = await search_client.search(query=query, max_results=max_results)
+    log.info(
+        "Retrieve pipeline: search for '%s' (max_results=%d, "
+        "include_domains=%s, exclude_domains=%s, freshness=%s)",
+        query, max_results, include_domains, exclude_domains, freshness,
+    )
+    search_resp = await search_client.search(
+        query=query,
+        max_results=max_results,
+        include_domains=include_domains,
+        exclude_domains=exclude_domains,
+        freshness=freshness,
+    )
     if not search_resp.results:
         log.warning("Retrieve pipeline: no search results for '%s'", query)
         return [], 0

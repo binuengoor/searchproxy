@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from app.config import Settings
-from app.services.search.base import BaseSearchProvider
+from app.services.search.base import BaseSearchProvider, normalize_domain, normalize_freshness
 from app.services.search.models import ProviderStatus, SearchResponse, SearchResult
 from app.services.search.providers.brave import BraveSearchProvider
 from app.services.search.providers.exa import ExaSearchProvider
@@ -82,17 +82,46 @@ class SearchRouter:
             self._stats[name].cooldown_until = cooldown_until
         log.warning("Search provider '%s' placed on cooldown for %d seconds (until %.0f)", name, secs, cooldown_until)
 
-    async def search(self, query: str, max_results: int = 10) -> SearchResponse:
+    async def search(
+        self,
+        query: str,
+        max_results: int = 10,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+        freshness: str | None = None,
+    ) -> SearchResponse:
         """Search across providers with rotation, circuit breaking, and fallback.
 
         Graceful degradation: on complete failure across all providers,
         returns SearchResponse(results=[]) so callers never crash.
         """
-        log.info("Searching across providers for '%s' (max_results=%d)", query, max_results)
+        log.info(
+            "Searching across providers for '%s' (max_results=%d, "
+            "include_domains=%s, exclude_domains=%s, freshness=%s)",
+            query, max_results, include_domains, exclude_domains, freshness,
+        )
+
+        # Normalize domains and freshness for consistency and cache stability
+        clean_inc = (
+            list(dict.fromkeys(normalize_domain(d) for d in include_domains if normalize_domain(d)))
+            if include_domains
+            else None
+        )
+        clean_exc = (
+            list(dict.fromkeys(normalize_domain(d) for d in exclude_domains if normalize_domain(d)))
+            if exclude_domains
+            else None
+        )
+        clean_freshness = normalize_freshness(freshness)
 
         # 1. Read cache
         if self._cache is not None:
-            cached = await self._cache.get_search(query, max_results)
+            cached = await self._cache.get_search(
+                query, max_results,
+                include_domains=clean_inc,
+                exclude_domains=clean_exc,
+                freshness=clean_freshness,
+            )
             if cached is not None:
                 log.info("Cache HIT for search: '%s'", query)
                 try:
@@ -104,6 +133,22 @@ class SearchRouter:
 
         results: list[SearchResult] = []
         tier1 = self.tier1_providers
+
+        # Helper to execute search on provider with fallback for legacy signatures
+        async def _call_provider(p: BaseSearchProvider) -> list[SearchResult]:
+            try:
+                return await p.search(
+                    query=query,
+                    max_results=max_results,
+                    include_domains=clean_inc,
+                    exclude_domains=clean_exc,
+                    freshness=clean_freshness,
+                )
+            except TypeError as exc:
+                msg = str(exc)
+                if "unexpected keyword argument" in msg or "too many positional arguments" in msg:
+                    return await p.search(query=query, max_results=max_results)
+                raise
 
         # 2. Try Tier 1 with round-robin rotation
         if tier1:
@@ -125,7 +170,7 @@ class SearchRouter:
 
                 try:
                     log.info("Attempting search via Tier 1 provider: '%s'", provider.name)
-                    results = await provider.search(query=query, max_results=max_results)
+                    results = await _call_provider(provider)
                     if results:
                         log.info("Provider '%s' succeeded with %d results", provider.name, len(results))
                         break
@@ -162,7 +207,7 @@ class SearchRouter:
 
                 try:
                     log.info("Attempting search via fallback safety net: '%s'", provider.name)
-                    results = await provider.search(query=query, max_results=max_results)
+                    results = await _call_provider(provider)
                     if results:
                         log.info("Fallback '%s' succeeded with %d results", provider.name, len(results))
                         break
@@ -178,7 +223,12 @@ class SearchRouter:
         # 4. Write cache on success
         if results and self._cache is not None:
             try:
-                await self._cache.set_search(query, max_results, response.model_dump())
+                await self._cache.set_search(
+                    query, max_results, response.model_dump(),
+                    include_domains=clean_inc,
+                    exclude_domains=clean_exc,
+                    freshness=clean_freshness,
+                )
             except Exception as exc:
                 log.warning("Failed to cache search results for '%s': %s", query, exc)
 

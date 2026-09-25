@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import httpx
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from app.config import Settings
 from app.services.search.base import BaseSearchProvider
@@ -35,8 +36,20 @@ class MockProvider(BaseSearchProvider):
     def is_available(self) -> bool:
         return self._available
 
-    async def search(self, query: str, max_results: int = 10) -> list[SearchResult]:
+    async def search(
+        self,
+        query: str,
+        max_results: int = 10,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+        freshness: str | None = None,
+    ) -> list[SearchResult]:
         self.call_count += 1
+        self.last_query = query
+        self.last_max_results = max_results
+        self.last_include_domains = include_domains
+        self.last_exclude_domains = exclude_domains
+        self.last_freshness = freshness
         if self.side_effect is not None:
             raise self.side_effect
         return self.return_results
@@ -173,4 +186,109 @@ async def test_search_router_cache_integration(test_settings):
     res = await router.search("cached query")
     assert res.results[0].title == "Cached Title"
     assert p1.call_count == 0
-    cache_mock.get_search.assert_awaited_once_with("cached query", 10)
+    cache_mock.get_search.assert_awaited_once_with(
+        "cached query", 10,
+        include_domains=None,
+        exclude_domains=None,
+        freshness=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_router_forwards_domains_and_freshness(test_settings):
+    p1 = MockProvider("p1", tier=1)
+    router = SearchRouter(
+        client=MagicMock(),
+        settings=test_settings,
+        custom_providers=[p1],
+    )
+
+    res = await router.search(
+        "test query",
+        max_results=7,
+        include_domains=["docs.python.org"],
+        exclude_domains=["spam.com"],
+        freshness="week",
+    )
+    assert len(res.results) == 1
+    assert p1.call_count == 1
+    assert p1.last_query == "test query"
+    assert p1.last_max_results == 7
+    assert p1.last_include_domains == ["docs.python.org"]
+    assert p1.last_exclude_domains == ["spam.com"]
+    assert p1.last_freshness == "week"
+
+
+@pytest.mark.asyncio
+async def test_search_router_legacy_provider_compatibility(test_settings):
+    class LegacyProvider(BaseSearchProvider):
+        @property
+        def name(self) -> str:
+            return "legacy"
+
+        @property
+        def tier(self) -> int:
+            return 1
+
+        @property
+        def is_available(self) -> bool:
+            return True
+
+        async def search(self, query: str, max_results: int = 10) -> list[SearchResult]:
+            return [
+                SearchResult(title="Legacy", url="https://example.com/legacy", snippet="Legacy")
+            ]
+
+    legacy = LegacyProvider(client=MagicMock(), settings=test_settings)
+    router = SearchRouter(
+        client=MagicMock(),
+        settings=test_settings,
+        custom_providers=[legacy],
+    )
+
+    res = await router.search(
+        "test query",
+        include_domains=["python.org"],
+        freshness="day",
+    )
+    assert len(res.results) == 1
+    assert res.results[0].title == "Legacy"
+
+
+@pytest.mark.asyncio
+async def test_search_router_internal_type_error_not_masked(test_settings):
+    class BuggyProvider(BaseSearchProvider):
+        @property
+        def name(self) -> str:
+            return "buggy"
+
+        @property
+        def tier(self) -> int:
+            return 1
+
+        @property
+        def is_available(self) -> bool:
+            return True
+
+        async def search(
+            self,
+            query: str,
+            max_results: int = 10,
+            include_domains: list[str] | None = None,
+            exclude_domains: list[str] | None = None,
+            freshness: str | None = None,
+        ) -> list[SearchResult]:
+            raise TypeError("unsupported operand type(s) for +: 'int' and 'str'")
+
+    buggy = BuggyProvider(client=MagicMock(), settings=test_settings)
+    fallback = MockProvider("fallback", tier=2)
+    router = SearchRouter(
+        client=MagicMock(),
+        settings=test_settings,
+        custom_providers=[buggy, fallback],
+    )
+
+    res = await router.search("test query")
+    assert len(res.results) == 1
+    assert res.results[0].title == "fallback Title"
+    assert router._is_cooling_down("buggy")

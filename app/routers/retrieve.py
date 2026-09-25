@@ -80,6 +80,7 @@ async def retrieve(
                 fetch_top_k=body.fetch_top_k,
                 include_domains=body.include_domains,
                 exclude_domains=body.exclude_domains,
+                freshness=body.freshness,
                 request=request,
             ),
             media_type="text/event-stream",
@@ -92,5 +93,6 @@ async def retrieve(
         synthesize=body.synthesize,
         include_domains=body.include_domains,
         exclude_domains=body.exclude_domains,
+        freshness=body.freshness,
         request=request,
     )

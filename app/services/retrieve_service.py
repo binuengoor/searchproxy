@@ -29,8 +29,8 @@ from fastapi import Request
 
 from app.config import Settings
 from app.schemas import Citation, RetrieveResponse, SourceChunk
+from app.services.cache import CacheService
 from app.services.fetch_chain import FetchChain
-from app.services.search import SearchRouter
 from app.services.rerank_service import RerankService
 from app.services.retrieve_steps import (
     budget_step,
@@ -41,7 +41,8 @@ from app.services.retrieve_steps import (
     rerank_step,
     search_step,
 )
-from app.services.cache import CacheService
+from app.services.search import SearchRouter
+from app.services.search.base import matches_domain, normalize_domain, normalize_freshness
 from app.services.synthesis_service import SynthesisService
 
 log = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ class RetrieveService:
         fetch_top_k: int,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
+        freshness: str | None = None,
         request: Request | None = None,
     ) -> tuple[dict[str, int], dict[int, float], dict[str, asyncio.Task], list[dict[str, str]]]:
         """Run search, dedup, speculative prefetch, rerank, and top-K candidate selection.
@@ -88,25 +90,38 @@ class RetrieveService:
         If no search results are found, returns ({}, {}, {}, []).
         """
         # ── Step 1: Search ───────────────────────────────────────────────
-        results, _ = await search_step(self._search, query, max_results)
+        clean_include = (
+            list(dict.fromkeys(normalize_domain(d) for d in include_domains if normalize_domain(d)))
+            if include_domains
+            else None
+        )
+        clean_exclude = (
+            list(dict.fromkeys(normalize_domain(d) for d in exclude_domains if normalize_domain(d)))
+            if exclude_domains
+            else None
+        )
+        clean_freshness = normalize_freshness(freshness)
+
+        results, _ = await search_step(
+            self._search,
+            query,
+            max_results,
+            include_domains=clean_include,
+            exclude_domains=clean_exclude,
+            freshness=clean_freshness,
+        )
         await check_disconnect(request)
         if not results:
             return {}, {}, {}, []
 
-        # ── Step 1.5: Domain filtering ──────────────────────────────────
-        if include_domains:
-            inc_set = {d.strip().lower() for d in include_domains if d.strip()}
-            results = [
-                r for r in results
-                if any(inc in urllib.parse.urlparse(r["url"]).netloc.lower() for inc in inc_set)
-            ]
+        # ── Step 1.5: Domain filtering (fallback safeguard) ─────────────
+        if clean_include:
+            inc_set = set(clean_include)
+            results = [r for r in results if matches_domain(r["url"], inc_set)]
 
-        if exclude_domains:
-            exc_set = {d.strip().lower() for d in exclude_domains if d.strip()}
-            results = [
-                r for r in results
-                if not any(exc in urllib.parse.urlparse(r["url"]).netloc.lower() for exc in exc_set)
-            ]
+        if clean_exclude:
+            exc_set = set(clean_exclude)
+            results = [r for r in results if not matches_domain(r["url"], exc_set)]
 
         if not results:
             return {}, {}, {}, []
@@ -170,6 +185,7 @@ class RetrieveService:
         fetch_top_k: int,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
+        freshness: str | None = None,
         request: Request | None = None,
     ) -> tuple[list[SourceChunk], int, int, int, list[dict[str, str]]]:
         """Run search → dedup → rerank → fetch → quality gates."""
@@ -177,6 +193,7 @@ class RetrieveService:
             query, max_results, fetch_top_k,
             include_domains=include_domains,
             exclude_domains=exclude_domains,
+            freshness=freshness,
             request=request,
         )
         if not top_urls:
@@ -203,6 +220,7 @@ class RetrieveService:
         synthesize: bool = True,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
+        freshness: str | None = None,
         request: Request | None = None,
     ) -> RetrieveResponse:
         """Run the full retrieve pipeline (non-streaming)."""
@@ -210,6 +228,7 @@ class RetrieveService:
             query=query, max_results=max_results, fetch_top_k=fetch_top_k,
             include_domains=include_domains,
             exclude_domains=exclude_domains,
+            freshness=freshness,
             request=request,
         )
 
@@ -304,6 +323,7 @@ class RetrieveService:
         fetch_top_k: int = 5,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
+        freshness: str | None = None,
         request: Request | None = None,
     ) -> AsyncIterator[str]:
         """Run the full retrieve pipeline and stream the LLM synthesis as SSE.
@@ -317,6 +337,7 @@ class RetrieveService:
             query, max_results, fetch_top_k,
             include_domains=include_domains,
             exclude_domains=exclude_domains,
+            freshness=freshness,
             request=request,
         )
         if not top_urls:

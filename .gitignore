@@ -77,3 +77,7 @@ list/
 
 # Hermes agent local plans
 .hermes/
+
+# SearXNG cache data
+searxng/data/*
+!searxng/data/.gitkeep

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import httpx
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from app.config import Settings
 from app.services.search.providers.brave import BraveSearchProvider
@@ -204,3 +205,184 @@ def test_provider_availability():
     assert ExaSearchProvider(client, empty_settings).is_available is False
     assert SerperSearchProvider(client, empty_settings).is_available is False
     assert SearxngSearchProvider(client, empty_settings).is_available is False
+
+
+@pytest.mark.asyncio
+async def test_tavily_search_domains_and_freshness(base_settings):
+    client = MagicMock(spec=httpx.AsyncClient)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"results": []}
+    client.post = AsyncMock(return_value=mock_resp)
+
+    provider = TavilySearchProvider(client=client, settings=base_settings)
+    await provider.search(
+        "quantum computing",
+        include_domains=["nature.com", "science.org"],
+        exclude_domains=["quora.com"],
+        freshness="month",
+    )
+    call_kwargs = client.post.call_args.kwargs
+    payload = call_kwargs["json"]
+    assert payload["include_domains"] == ["nature.com", "science.org"]
+    assert payload["exclude_domains"] == ["quora.com"]
+    assert payload["time_range"] == "month"
+
+
+@pytest.mark.asyncio
+async def test_brave_search_domains_and_freshness(base_settings):
+    client = MagicMock(spec=httpx.AsyncClient)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"web": {"results": []}}
+    client.get = AsyncMock(return_value=mock_resp)
+
+    provider = BraveSearchProvider(client=client, settings=base_settings)
+    await provider.search(
+        "fastapi tutorial",
+        include_domains=["python.org", "github.com"],
+        exclude_domains=["w3schools.com"],
+        freshness="week",
+    )
+    call_kwargs = client.get.call_args.kwargs
+    params = call_kwargs["params"]
+    assert "(site:python.org OR site:github.com)" in params["q"]
+    assert "-site:w3schools.com" in params["q"]
+    assert params["freshness"] == "pw"
+
+
+@pytest.mark.asyncio
+async def test_brave_search_single_domain(base_settings):
+    client = MagicMock(spec=httpx.AsyncClient)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"web": {"results": []}}
+    client.get = AsyncMock(return_value=mock_resp)
+
+    provider = BraveSearchProvider(client=client, settings=base_settings)
+    await provider.search(
+        "docs",
+        include_domains=["python.org"],
+        freshness="day",
+    )
+    call_kwargs = client.get.call_args.kwargs
+    params = call_kwargs["params"]
+    assert "site:python.org" in params["q"]
+    assert "OR" not in params["q"]
+    assert params["freshness"] == "pd"
+
+
+@pytest.mark.asyncio
+async def test_exa_search_domains_and_freshness(base_settings):
+    client = MagicMock(spec=httpx.AsyncClient)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"results": []}
+    client.post = AsyncMock(return_value=mock_resp)
+
+    provider = ExaSearchProvider(client=client, settings=base_settings)
+    await provider.search(
+        "deep learning",
+        include_domains=["arxiv.org"],
+        exclude_domains=["medium.com"],
+        freshness="day",
+    )
+    call_kwargs = client.post.call_args.kwargs
+    payload = call_kwargs["json"]
+    assert payload["includeDomains"] == ["arxiv.org"]
+    assert payload["excludeDomains"] == ["medium.com"]
+    assert "startPublishedDate" in payload
+    assert payload["startPublishedDate"].endswith("Z")
+
+
+@pytest.mark.asyncio
+async def test_serper_search_domains_and_freshness(base_settings):
+    client = MagicMock(spec=httpx.AsyncClient)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"organic": []}
+    client.post = AsyncMock(return_value=mock_resp)
+
+    provider = SerperSearchProvider(client=client, settings=base_settings)
+    await provider.search(
+        "machine learning",
+        include_domains=["reddit.com"],
+        exclude_domains=["quora.com"],
+        freshness="year",
+    )
+    call_kwargs = client.post.call_args.kwargs
+    payload = call_kwargs["json"]
+    assert "site:reddit.com" in payload["q"]
+    assert "-site:quora.com" in payload["q"]
+    assert payload["tbs"] == "qdr:y"
+
+
+@pytest.mark.asyncio
+async def test_searxng_search_domains_and_freshness(base_settings):
+    client = MagicMock(spec=httpx.AsyncClient)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"results": []}
+    client.get = AsyncMock(return_value=mock_resp)
+
+    provider = SearxngSearchProvider(client=client, settings=base_settings)
+    await provider.search(
+        "linux kernel",
+        include_domains=["kernel.org"],
+        exclude_domains=["spam.com"],
+        freshness="day",
+    )
+    call_kwargs = client.get.call_args.kwargs
+    params = call_kwargs["params"]
+    assert "site:kernel.org" in params["q"]
+    assert "-site:spam.com" in params["q"]
+    assert params["time_range"] == "day"
+
+
+@pytest.mark.asyncio
+async def test_providers_normalize_url_domains(base_settings):
+    client = MagicMock(spec=httpx.AsyncClient)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"results": [], "web": {"results": []}, "organic": []}
+    client.get = AsyncMock(return_value=mock_resp)
+    client.post = AsyncMock(return_value=mock_resp)
+
+    # Brave
+    brave = BraveSearchProvider(client=client, settings=base_settings)
+    await brave.search(
+        "query",
+        include_domains=["https://docs.python.org/3/", "http://github.com:8080/"],
+        exclude_domains=["https://spam.com/path"],
+        freshness="24h",
+    )
+    brave_params = client.get.call_args.kwargs["params"]
+    assert "(site:docs.python.org OR site:github.com)" in brave_params["q"]
+    assert "-site:spam.com" in brave_params["q"]
+    assert brave_params["freshness"] == "pd"
+
+    # Tavily
+    tavily = TavilySearchProvider(client=client, settings=base_settings)
+    await tavily.search(
+        "query",
+        include_domains=["https://docs.python.org/"],
+        exclude_domains=["https://spam.com/"],
+        freshness="today",
+    )
+    tavily_payload = client.post.call_args.kwargs["json"]
+    assert tavily_payload["include_domains"] == ["docs.python.org"]
+    assert tavily_payload["exclude_domains"] == ["spam.com"]
+    assert tavily_payload["time_range"] == "day"
+
+    # Exa
+    exa = ExaSearchProvider(client=client, settings=base_settings)
+    await exa.search(
+        "query",
+        include_domains=["https://arxiv.org/abs/1234"],
+        exclude_domains=["medium.com/"],
+        freshness="pw",
+    )
+    exa_payload = client.post.call_args.kwargs["json"]
+    assert exa_payload["includeDomains"] == ["arxiv.org"]
+    assert exa_payload["excludeDomains"] == ["medium.com"]
+    assert "startPublishedDate" in exa_payload

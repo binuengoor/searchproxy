@@ -1,0 +1,21 @@
+# SearXNG configuration for SearchProxy fallback search
+# See https://docs.searxng.org/admin/settings/settings.html
+
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "SearchProxy SearXNG"
+
+server:
+  # In production, replace secret_key with a randomly generated 32-byte hex string
+  secret_key: "searchproxy-searxng-internal-secret-key-change-me"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json

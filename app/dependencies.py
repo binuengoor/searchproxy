@@ -13,11 +13,12 @@ import threading
 from app.clients import get_client
 from app.config import settings
 from app.services.cache import CacheService
+from app.services.deep_research_service import DeepResearchService
+from app.services.extract_service import ExtractService
 from app.services.fetch_chain import FetchChain
-from app.services.search import SearchRouter
 from app.services.rerank_service import RerankService
 from app.services.retrieve_service import RetrieveService
-from app.services.deep_research_service import DeepResearchService
+from app.services.search import SearchRouter
 from app.services.searxng_compat import SearxngCompatService
 from app.services.synthesis_service import SynthesisService
 
@@ -30,6 +31,7 @@ _synthesis_service: SynthesisService | None = None
 _retrieve_service: RetrieveService | None = None
 _searxng_service: SearxngCompatService | None = None
 _deep_research_service: DeepResearchService | None = None
+_extract_service: ExtractService | None = None
 
 
 def _get_cache() -> CacheService:
@@ -48,7 +50,9 @@ def get_fetch_chain() -> FetchChain:
     if _fetch_chain is None:
         with _lock:
             if _fetch_chain is None:
-                _fetch_chain = FetchChain(client=get_client(), settings=settings, cache=_get_cache())
+                _fetch_chain = FetchChain(
+                    client=get_client(), settings=settings, cache=_get_cache()
+                )
     return _fetch_chain
 
 
@@ -58,7 +62,9 @@ def get_search_router() -> SearchRouter:
     if _search_router is None:
         with _lock:
             if _search_router is None:
-                _search_router = SearchRouter(client=get_client(), settings=settings, cache=_get_cache())
+                _search_router = SearchRouter(
+                    client=get_client(), settings=settings, cache=_get_cache()
+                )
     return _search_router
 
 
@@ -68,7 +74,9 @@ def get_rerank_service() -> RerankService:
     if _rerank_service is None:
         with _lock:
             if _rerank_service is None:
-                _rerank_service = RerankService(client=get_client(), settings=settings, cache=_get_cache())
+                _rerank_service = RerankService(
+                    client=get_client(), settings=settings, cache=_get_cache()
+                )
     return _rerank_service
 
 
@@ -128,4 +136,19 @@ def get_deep_research_service() -> DeepResearchService:
                     http_client=get_client(),
                 )
     return _deep_research_service
+
+
+def get_extract_service() -> ExtractService:
+    """Return the shared ExtractService singleton (thread-safe lazy init)."""
+    global _extract_service
+    if _extract_service is None:
+        with _lock:
+            if _extract_service is None:
+                _extract_service = ExtractService(
+                    fetch_chain=get_fetch_chain(),
+                    http_client=get_client(),
+                    settings=settings,
+                )
+    return _extract_service
+
 

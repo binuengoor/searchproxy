@@ -1,29 +1,38 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Any
+from typing import Any, AsyncGenerator
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from pydantic import BaseModel
 from starlette.responses import RedirectResponse
+from starlette.routing import Mount
 
+import app.clients as _clients_module
 import app.config as _config_module
 from app.clean_executor import init_executor, shutdown_executor
-import app.clients as _clients_module
-from app.observability import init_store, ObservabilityStore
+from app.mcp_server import get_mcp_sse_app
 from app.middleware import request_logger as _request_logger_module
-from app.middleware.auth import AuthMiddleware, EXCLUDED_PATHS
+from app.middleware.auth import AuthMiddleware
+from app.middleware.correlation import CorrelationIdMiddleware
+from app.middleware.json_formatter import CorrelationIdFilter, JsonFormatter
 from app.middleware.mcp_unwrap import MCPBodyUnwrapMiddleware
 from app.middleware.metrics import MetricsMiddleware
-from app.middleware.correlation import CorrelationIdMiddleware
-from app.middleware.json_formatter import JsonFormatter, CorrelationIdFilter
+from app.observability import ObservabilityStore, init_store
 from app.openapi_deref import dereference
-from app.services.metrics import get_collector
+from app.routers import (
+    extract,
+    fetch,
+    firecrawl,
+    metrics,
+    research,
+    retrieve,
+    search,
+    searxng,
+)
 
 
 class HealthResponse(BaseModel):
@@ -83,7 +92,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _store = init_store(_config_module.settings)
     _purge_task: asyncio.Task | None = None
     if _config_module.settings.OBSERVABILITY_ENABLED:
-        log.info("Observability enabled (retention=%sd)", _config_module.settings.OBSERVABILITY_RETENTION_DAYS)
+        log.info(
+            "Observability enabled (retention=%sd)",
+            _config_module.settings.OBSERVABILITY_RETENTION_DAYS,
+        )
         _request_logger_module._store = _store
         _request_logger_module._settings = _config_module.settings
         # Run one purge immediately on startup, then start background loop
@@ -176,15 +188,19 @@ async def root() -> RedirectResponse:
 
 
 # ---------------------------------------------------------------------------
-# Routers
+# Routers & MCP SSE Mount
 # ---------------------------------------------------------------------------
-
-from app.routers import search, searxng, research, fetch, firecrawl, metrics, retrieve
 
 app.include_router(search.router)
 app.include_router(searxng.router)
 app.include_router(research.router)
 app.include_router(fetch.router)
 app.include_router(firecrawl.router)
+app.include_router(extract.router)
 app.include_router(metrics.router)
 app.include_router(retrieve.router)
+
+# Mount native MCP SSE endpoints (/sse, /messages/, /sse/messages/)
+_mcp_sse = get_mcp_sse_app()
+for _r in _mcp_sse.routes:
+    app.routes.append(_r)

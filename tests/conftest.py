@@ -23,6 +23,7 @@ def reset_dependencies(monkeypatch):
     deps._retrieve_service = None
     deps._searxng_service = None
     deps._deep_research_service = None
+    deps._extract_service = None
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ OPENAPI_EXPECTED_PATHS = {
     "/health",
     "/fetch",
     "/v1/retrieve",
+    "/v1/extract",
     "/metrics",
 }
 
@@ -23,6 +24,7 @@ HIDDEN_PATHS = {
     "/compat/searxng",
     "/compat/searxng/search",
     "/compat/firecrawl/scrape",
+    "/compat/firecrawl/v1/extract",
 }
 
 

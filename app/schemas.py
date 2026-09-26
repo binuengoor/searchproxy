@@ -10,8 +10,9 @@ Import into request-body models or response-body models as needed.
 
 from __future__ import annotations
 
-from typing import Any
 import json
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -207,3 +208,126 @@ class RetrieveResponse(BaseModel):
     )
     sources_fetched: int = Field(default=0, description="Number of sources successfully fetched.")
     sources_failed: int = Field(default=0, description="Number of sources that failed to fetch.")
+
+
+# ---------------------------------------------------------------------------
+# /v1/extract schemas
+# ---------------------------------------------------------------------------
+
+class ExtractRequest(BaseModel):
+    """Request body for structured extraction."""
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "url": "https://news.ycombinator.com",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "top_story": {"type": "string"},
+                            "points": {"type": "integer"},
+                        },
+                        "required": ["top_story"],
+                    },
+                    "prompt": "Extract the top story title and its points count",
+                }
+            ]
+        },
+    )
+
+    url: str = Field(..., description="Target URL to scrape and extract data from.")
+    schema_: dict[str, Any] | None = Field(
+        default=None,
+        alias="schema",
+        description="JSON Schema dict or definition specifying data structure to extract.",
+    )
+    prompt: str | None = Field(
+        default=None,
+        description="Optional guidance prompt for the LLM to guide extraction.",
+    )
+    system_prompt: str | None = Field(
+        default=None,
+        alias="systemPrompt",
+        description="Optional system instruction for the LLM.",
+    )
+
+    @property
+    def schema(self) -> dict[str, Any] | None:
+        return self.schema_
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        # Unpack nested body wrapper (Open WebUI / MCPHub format)
+        if "body" in data and isinstance(data["body"], dict):
+            for k in (
+                "url",
+                "urls",
+                "schema",
+                "json_schema",
+                "prompt",
+                "system_prompt",
+                "systemPrompt",
+            ):
+                if k in data["body"] and (k not in data or not data[k]):
+                    data[k] = data["body"][k]
+
+        # Support 'urls' field from Firecrawl v1 API
+        if "urls" in data and ("url" not in data or not data["url"]):
+            if isinstance(data["urls"], list) and len(data["urls"]) > 0:
+                data["url"] = data["urls"][0]
+            elif isinstance(data["urls"], str) and data["urls"]:
+                data["url"] = data["urls"]
+
+        # Support camelCase 'systemPrompt'
+        if "systemPrompt" in data and ("system_prompt" not in data or not data["system_prompt"]):
+            data["system_prompt"] = data["systemPrompt"]
+
+        # Support 'json_schema' alias
+        if "json_schema" in data and ("schema" not in data or not data["schema"]):
+            data["schema"] = data["json_schema"]
+
+        # Support JSON string schema
+        if "schema" in data and isinstance(data["schema"], str):
+            try:
+                data["schema"] = json.loads(data["schema"])
+            except Exception:
+                pass
+
+        return data
+
+
+class ExtractResponse(BaseModel):
+    """Response from structured extraction."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "success": True,
+                    "data": {
+                        "top_story": "Show HN: SearchProxy",
+                        "points": 342,
+                    },
+                    "url": "https://news.ycombinator.com",
+                    "error": None,
+                }
+            ]
+        }
+    )
+
+    success: bool = Field(..., description="Whether the scrape and extraction succeeded.")
+    data: Any = Field(
+        default=None,
+        description="Extracted structured data matching the requested schema.",
+    )
+    url: str = Field(..., description="The target URL.")
+    error: str | None = Field(
+        default=None,
+        description="Human-readable error message if extraction failed.",
+    )
+

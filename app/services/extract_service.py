@@ -43,6 +43,8 @@ class ExtractService:
         schema: dict[str, Any] | None = None,
         prompt: str | None = None,
         system_prompt: str | None = None,
+        actions: list[dict[str, Any]] | None = None,
+        screenshot: bool = False,
     ) -> ExtractResponse:
         """Extract structured JSON from a target URL according to a JSON schema.
 
@@ -51,6 +53,8 @@ class ExtractService:
             schema: Optional JSON Schema dict specifying expected data structure.
             prompt: Optional user instructions guiding what to extract.
             system_prompt: Optional custom system instructions.
+            actions: Optional interactive browser actions.
+            screenshot: Whether to capture a screenshot.
 
         Returns:
             ExtractResponse containing success flag, extracted JSON data, and target URL.
@@ -68,14 +72,24 @@ class ExtractService:
             clean_url = f"https://{clean_url}"
 
         # 1. Fetch content through tiered fetch chain
-        log.info("Extracting structured data from url='%s'", clean_url)
-        fetch_result = await self._fetch_chain.execute(clean_url)
+        log.info(
+            "Extracting structured data from url='%s' (actions=%s, screenshot=%s)",
+            clean_url,
+            bool(actions),
+            screenshot,
+        )
+        fetch_result = await self._fetch_chain.execute(
+            clean_url, actions=actions, screenshot=screenshot
+        )
+        screenshot_base64 = fetch_result.screenshot_base64
+
         if not fetch_result.success:
             return ExtractResponse(
                 success=False,
                 data=None,
                 url=clean_url,
                 error=fetch_result.error or "Failed to fetch content from URL.",
+                screenshot_base64=screenshot_base64,
             )
 
         markdown = fetch_result.markdown.strip() if fetch_result.markdown else ""
@@ -85,6 +99,7 @@ class ExtractService:
                 data=None,
                 url=clean_url,
                 error="Fetched page contained no extractable content.",
+                screenshot_base64=screenshot_base64,
             )
 
         # 2. Build prompt components
@@ -149,6 +164,7 @@ class ExtractService:
                 data=None,
                 url=clean_url,
                 error=f"LLM extraction failed: {exc}",
+                screenshot_base64=screenshot_base64,
             )
 
         # 4. Clean and parse JSON response
@@ -171,6 +187,7 @@ class ExtractService:
                         data=None,
                         url=clean_url,
                         error=f"Failed to parse LLM output as JSON: {err}",
+                        screenshot_base64=screenshot_base64,
                     )
             else:
                 return ExtractResponse(
@@ -178,6 +195,7 @@ class ExtractService:
                     data=None,
                     url=clean_url,
                     error=f"Failed to parse LLM output as JSON: {err}",
+                    screenshot_base64=screenshot_base64,
                 )
 
         # 5. Schema validation if schema is provided
@@ -191,6 +209,7 @@ class ExtractService:
                     data=parsed_data,
                     url=clean_url,
                     error=f"Schema validation error: {val_err.message}",
+                    screenshot_base64=screenshot_base64,
                 )
             except jsonschema.SchemaError as schema_err:
                 log.warning("Invalid JSON schema provided: %s", schema_err.message)
@@ -199,6 +218,12 @@ class ExtractService:
                     data=parsed_data,
                     url=clean_url,
                     error=f"Invalid JSON Schema: {schema_err.message}",
+                    screenshot_base64=screenshot_base64,
                 )
 
-        return ExtractResponse(success=True, data=parsed_data, url=clean_url)
+        return ExtractResponse(
+            success=True,
+            data=parsed_data,
+            url=clean_url,
+            screenshot_base64=screenshot_base64,
+        )

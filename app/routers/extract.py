@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
 
@@ -42,12 +42,17 @@ async def extract(
 ) -> ExtractResponse:
     """Scrape a URL and extract structured data conforming to a JSON schema."""
     log.info("/v1/extract url='%s' has_schema=%s", body.url, bool(body.schema_))
-    return await service.extract(
-        url=body.url,
-        schema=body.schema_,
-        prompt=body.prompt,
-        system_prompt=body.system_prompt,
-    )
+    extract_kwargs: dict[str, Any] = {
+        "url": body.url,
+        "schema": body.schema_,
+        "prompt": body.prompt,
+        "system_prompt": body.system_prompt,
+    }
+    if body.actions is not None:
+        extract_kwargs["actions"] = body.actions
+    if body.screenshot:
+        extract_kwargs["screenshot"] = body.screenshot
+    return await service.extract(**extract_kwargs)
 
 
 @router.post(

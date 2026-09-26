@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 import time
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -22,6 +23,9 @@ from app.services.reddit_client import RedditClient
 from app.services.scrape_do import ScrapeDoClient
 from app.services.scraperapi import ScraperAPIClient
 from app.services.tika_client import TikaClient
+
+if TYPE_CHECKING:
+    from app.services.cache import CacheService
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +98,8 @@ class FetchChain:
         skip_firebreak: bool = False,
         content_filter: str | None = None,
         content_query: str | None = None,
+        actions: list[dict[str, Any]] | None = None,
+        screenshot: bool = False,
     ) -> FetchResult:
         """Execute the tiered fetch chain for the given URL.
 
@@ -137,7 +143,7 @@ class FetchChain:
         start_time = time.perf_counter()
 
         # ── Cache read ────────────────────────────────────────────────
-        if self._cache is not None:
+        if self._cache is not None and not actions and not screenshot:
             cached = await self._cache.get_fetch(url)
             if cached is not None:
                 log.info("Cache HIT for fetch: %s", url)
@@ -149,7 +155,7 @@ class FetchChain:
                 log.info("Cache MISS for fetch: %s", url)
 
         # ── Document / PDF Extraction (Tier 0: pymupdf4llm, Tier 1: Tika) ──
-        if url.lower().endswith(".pdf") or ".pdf?" in url.lower():
+        if not actions and not screenshot and (url.lower().endswith(".pdf") or ".pdf?" in url.lower()):
             try:
                 resp = await self._client.get(
                     url, follow_redirects=True, timeout=self._settings.TIKA_TIMEOUT,
@@ -212,7 +218,7 @@ class FetchChain:
                 log.warning("PDF extraction failed for %s: %s", url, exc)
 
         # ── Specialized Domain: Reddit Thread Extractor ─────────────
-        if self._reddit.is_reddit_url(url):
+        if not actions and not screenshot and self._reddit.is_reddit_url(url):
             reddit_res = await self._reddit.fetch(url)
             if reddit_res.success:
                 log.info("Reddit extractor succeeded for %s", url)
@@ -223,7 +229,7 @@ class FetchChain:
             log.warning("Reddit extractor failed for %s: %s; escalating to standard tiers", url, reddit_res.error)
 
         # ── Tier 0: FastFetch (Direct HTTP + Trafilatura) ───────────────
-        if self._settings.FAST_FETCH_ENABLED:
+        if self._settings.FAST_FETCH_ENABLED and not actions and not screenshot:
             fast_res = await self._fast_fetch.fetch(url)
             if fast_res.success:
                 log.info("FastFetch succeeded for %s", url)
@@ -240,8 +246,18 @@ class FetchChain:
                 return await self._firebreak_and_cache(url, start_time, aggressive_clean=aggressive_clean)
 
         # ── Tier 1: Crawl4AI (with 1 transient retry) ────────────────────
+        crawl_kwargs: dict[str, Any] = {
+            "content_filter": content_filter,
+            "content_query": content_query,
+        }
+        if actions is not None:
+            crawl_kwargs["actions"] = actions
+        if screenshot:
+            crawl_kwargs["screenshot"] = screenshot
+
         result = await self._crawl4ai.fetch_markdown(
-            url, content_filter=content_filter, content_query=content_query,
+            url,
+            **crawl_kwargs,
         )
 
         if not result.success and self._is_transient(result):
@@ -253,7 +269,8 @@ class FetchChain:
             )
             await asyncio.sleep(1.0)
             result = await self._crawl4ai.fetch_markdown(
-                url, content_filter=content_filter, content_query=content_query,
+                url,
+                **crawl_kwargs,
             )
 
         if result.success:
@@ -341,7 +358,10 @@ class FetchChain:
     async def _store_fetch(self, url: str, result: FetchResult) -> None:
         """Store a fetch result in the cache if caching is enabled."""
         if self._cache is not None:
-            await self._cache.set_fetch(url, result.model_dump())
+            dump = result.model_dump()
+            if dump.get("screenshot_base64"):
+                dump["screenshot_base64"] = None
+            await self._cache.set_fetch(url, dump)
 
     async def _firebreak_and_cache(self, url: str, start_time: float, aggressive_clean: bool = False) -> FetchResult:
         """Run firebreak then store the result in cache."""

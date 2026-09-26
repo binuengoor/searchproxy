@@ -134,6 +134,7 @@ def get_deep_research_service() -> DeepResearchService:
                     synthesis_service=get_synthesis_service(),
                     settings=settings,
                     http_client=get_client(),
+                    cache=_get_cache(),
                 )
     return _deep_research_service
 

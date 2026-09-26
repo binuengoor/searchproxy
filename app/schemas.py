@@ -216,6 +216,10 @@ class RetrieveResponse(BaseModel):
     )
     sources_fetched: int = Field(default=0, description="Number of sources successfully fetched.")
     sources_failed: int = Field(default=0, description="Number of sources that failed to fetch.")
+    research_id: str | None = Field(
+        default=None,
+        description="Research identifier for MCP resource lookup (e.g. searchproxy://research/{id}).",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -234,6 +238,37 @@ class RetrieveResponse(BaseModel):
         elif not self.answer and self.report:
             self.answer = self.report
         return self
+
+
+# ---------------------------------------------------------------------------
+# /fetch schemas
+# ---------------------------------------------------------------------------
+
+class FetchRequest(BaseModel):
+    """Request body for the /fetch endpoint."""
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "url": "https://en.wikipedia.org/wiki/Real_Madrid_CF",
+                    "actions": [{"type": "scroll", "direction": "down"}],
+                    "screenshot": False,
+                }
+            ]
+        },
+    )
+
+    url: str = Field(..., description="Target URL to fetch.")
+    actions: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Optional interactive browser actions (e.g. click, scroll, wait).",
+    )
+    screenshot: bool = Field(
+        default=False,
+        description="Whether to capture a screenshot of the page.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +313,14 @@ class ExtractRequest(BaseModel):
         alias="systemPrompt",
         description="Optional system instruction for the LLM.",
     )
+    actions: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Optional interactive browser actions (e.g. click, scroll, wait).",
+    )
+    screenshot: bool = Field(
+        default=False,
+        description="Whether to capture a screenshot of the page.",
+    )
 
     @property
     def schema(self) -> dict[str, Any] | None:
@@ -298,6 +341,8 @@ class ExtractRequest(BaseModel):
                 "prompt",
                 "system_prompt",
                 "systemPrompt",
+                "actions",
+                "screenshot",
             ):
                 if k in data["body"] and (k not in data or not data[k]):
                     data[k] = data["body"][k]
@@ -356,4 +401,13 @@ class ExtractResponse(BaseModel):
         default=None,
         description="Human-readable error message if extraction failed.",
     )
+    screenshot_base64: str | None = Field(
+        default=None,
+        description="Base64 encoded screenshot if requested.",
+    )
+
+
+from app.services.models import FetchResult  # noqa: E402
+
+FetchResponse = FetchResult
 

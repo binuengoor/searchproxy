@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import httpx
 
@@ -32,8 +33,10 @@ class Crawl4AIClient:
         url: str,
         content_filter: str | None = None,
         content_query: str | None = None,
+        actions: list[dict[str, Any]] | None = None,
+        screenshot: bool = False,
     ) -> FetchResult:
-        """POST to Crawl4AI /md for plain markdown fetch.
+        """POST to Crawl4AI /md for plain markdown fetch with optional actions and screenshot.
 
         Graceful degradation: on any error (timeout, HTTP error, parse failure)
         returns ``FetchResult(success=False, ...)`` so callers always get a valid
@@ -43,15 +46,27 @@ class Crawl4AIClient:
             url: The target URL to fetch.
             content_filter: Crawl4AI filter mode — 'fit' (default), 'bm25', or 'raw'.
             content_query: BM25 query string. Required when content_filter='bm25'.
+            actions: Interactive browser actions (click, scroll, wait, etc.).
+            screenshot: If True, request headless browser screenshot.
 
         Returns:
             FetchResult with markdown content on success, or success=False on failure.
         """
-        log.info("Crawl4AI fetch_markdown: %s (filter=%s)", url, content_filter or "fit")
+        log.info(
+            "Crawl4AI fetch_markdown: %s (filter=%s, actions=%s, screenshot=%s)",
+            url,
+            content_filter or "fit",
+            bool(actions),
+            screenshot,
+        )
 
-        body: dict[str, str] = {"url": url, "f": content_filter or "fit"}
+        body: dict[str, Any] = {"url": url, "f": content_filter or "fit"}
         if content_filter == "bm25" and content_query:
             body["q"] = content_query
+        if actions:
+            body["actions"] = actions
+        if screenshot:
+            body["screenshot"] = True
 
         headers: dict[str, str] | None = None
         if self._settings.CRAWL4AI_API_TOKEN:

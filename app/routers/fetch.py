@@ -6,28 +6,14 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, ConfigDict, Field
 
 from app.dependencies import get_fetch_chain
-from app.services.models import FetchResult
+from app.schemas import FetchRequest
 from app.services.fetch_chain import FetchChain
+from app.services.models import FetchResult
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="", tags=["fetch"])
-
-
-class FetchRequest(BaseModel):
-    """Request body for the /fetch endpoint."""
-
-    url: str = Field(..., description="URL to fetch")
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {"url": "https://en.wikipedia.org/wiki/Real_Madrid_CF"}
-            ]
-        }
-    )
 
 
 FETCH_DESCRIPTION = """\
@@ -57,7 +43,15 @@ Crawl4AI (headless browser) first, then Jina Reader, then anti-bot fallbacks
 )
 async def fetch_url(
     body: FetchRequest,
-    format: Annotated[str, Query(description="Response format: markdown (default; currently the only supported format). Future: text, html.")] = "markdown",
+    format: Annotated[
+        str,
+        Query(
+            description=(
+                "Response format: markdown (default; currently the only supported format). "
+                "Future: text, html."
+            )
+        ),
+    ] = "markdown",
     chain: Annotated[FetchChain, Depends(get_fetch_chain)] = None,  # type: ignore[assignment]
 ) -> FetchResult:
     """Use this tool when the user provides a specific URL and asks you to read,
@@ -65,6 +59,19 @@ async def fetch_url(
     (Crawl4AI → Jina Reader → anti-bot fallback) and returns markdown content
     with metadata.
     """
-    log.info("/fetch url='%s' format=%s", body.url, format)
-    result = await chain.execute(body.url)
+    log.info(
+        "/fetch url='%s' format=%s actions=%s screenshot=%s",
+        body.url,
+        format,
+        bool(body.actions),
+        body.screenshot,
+    )
+    if body.actions or body.screenshot:
+        result = await chain.execute(
+            body.url,
+            actions=body.actions,
+            screenshot=body.screenshot,
+        )
+    else:
+        result = await chain.execute(body.url)
     return result

@@ -79,6 +79,7 @@ async def safe_fetch(
                 title = metadata.get("title", "") or ""
                 description = metadata.get("description", "") or ""
                 language = metadata.get("language", "") or ""
+                screenshot_base64 = data.get("screenshot") or data.get("screenshot_base64")
                 return FetchResult(
                     success=True,
                     url=url,
@@ -88,6 +89,7 @@ async def safe_fetch(
                     language=language,
                     status_code=status_code,
                     source=source,
+                    screenshot_base64=screenshot_base64,
                 )
             # Non-dict JSON response
             return FetchResult(

@@ -66,4 +66,8 @@ class ProviderStatus(BaseModel):
     total_requests: int = 0
     failed_requests: int = 0
     last_error: str | None = None
+    rolling_latencies: list[float] = Field(default_factory=list)
+    recent_errors: int = 0
+    avg_latency_ms: float = 0.0
+    is_degraded: bool = False
     extra_metadata: dict[str, Any] = Field(default_factory=dict)

@@ -66,6 +66,10 @@ class ResearchRequest(BaseModel):
         default=False,
         description="If true, yield progress steps and tokens via Server-Sent Events (SSE).",
     )
+    format: str = Field(
+        default="markdown",
+        description="Report format: 'markdown' (default) or 'dossier' (executive multi-section report).",
+    )
     # Open WebUI tool wrapper compatibility
     body: Any = Field(default=None, description="Optional nested body wrapper from tool invocations.")
     messages: list[MessageItem] = Field(default=[], description="OpenAI-style messages array.")
@@ -82,6 +86,7 @@ class ResearchRequest(BaseModel):
                 "include_domains",
                 "exclude_domains",
                 "stream",
+                "format",
                 "messages",
             ):
                 if k in data["body"] and (k not in data or not data[k]):
@@ -109,10 +114,11 @@ async def deep_research(
 ) -> RetrieveResponse | StreamingResponse:
     """Execute autonomous 2-hop deep research and return a cited report."""
     log.info(
-        "/v1/research query='%s' fetch_top_k=%d stream=%s",
+        "/v1/research query='%s' fetch_top_k=%d stream=%s format=%s",
         body.query,
         body.fetch_top_k,
         body.stream,
+        body.format,
     )
     if body.stream:
         return StreamingResponse(
@@ -121,6 +127,7 @@ async def deep_research(
                 fetch_top_k=body.fetch_top_k,
                 include_domains=body.include_domains,
                 exclude_domains=body.exclude_domains,
+                format=body.format,
                 request=request,
             ),
             media_type="text/event-stream",
@@ -131,6 +138,7 @@ async def deep_research(
         fetch_top_k=body.fetch_top_k,
         include_domains=body.include_domains,
         exclude_domains=body.exclude_domains,
+        format=body.format,
         request=request,
     )
 

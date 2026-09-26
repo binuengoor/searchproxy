@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -118,6 +119,18 @@ class Settings(BaseSettings):
     CACHE_RERANK_TTL: int = Field(default=300, description="TTL for rerank cache entries in seconds.")
     CACHE_SYNTHESIS_TTL: int = Field(default=3600, description="TTL for synthesized answer cache entries in seconds.")
     CACHE_DB_PATH: str = Field(default="/data/cache.db", description="Path to SQLite cache database.")
+    CACHE_SEMANTIC_ENABLED: bool = Field(
+        default=True,
+        description="Enable semantic vector cache for search queries.",
+    )
+    CACHE_SEMANTIC_THRESHOLD: float = Field(
+        default=0.92,
+        description="Cosine similarity threshold for semantic cache hits (0.0 to 1.0).",
+    )
+    CACHE_SEMANTIC_MODEL: str = Field(
+        default="BAAI/bge-small-en-v1.5",
+        description="Fastembed embedding model name for semantic cache.",
+    )
 
     # --- Search: SearXNG Safety Net / Passthrough ---
     SEARXNG_URL: str | None = Field(

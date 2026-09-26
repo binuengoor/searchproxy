@@ -24,6 +24,12 @@ class FetchResult(BaseModel):
     status_code: int | None = Field(default=None, description="HTTP status code from the successful tier, if any.")
     source: str = Field(default="", description="Which tier produced the result: crawl4ai, jina, scrape_do, scraperapi, or empty.")
     fetch_time_ms: float | None = Field(default=None, description="Time spent fetching this URL in milliseconds (entire tier chain).")
+    screenshot_base64: str | None = Field(
+        default=None,
+        description=(
+            "Base64-encoded screenshot image (e.g. data:image/png;base64,...) if requested."
+        ),
+    )
 
     model_config = ConfigDict(
         json_schema_extra={

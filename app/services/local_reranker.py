@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 import threading
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -42,7 +42,11 @@ class LocalReranker:
 
                 cache_dir = self._settings.FASTEMBED_CACHE_PATH
                 if cache_dir:
-                    os.makedirs(cache_dir, exist_ok=True)
+                    try:
+                        os.makedirs(cache_dir, exist_ok=True)
+                    except OSError:
+                        cache_dir = "/tmp/fastembed"
+                        os.makedirs(cache_dir, exist_ok=True)
 
                 log.info(
                     "Loading local ONNX reranker model '%s' (cache_dir=%s)...",

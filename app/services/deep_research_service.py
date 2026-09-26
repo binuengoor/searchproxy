@@ -13,7 +13,10 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, AsyncIterator
+import uuid
+from collections import deque
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, AsyncIterator
 from urllib.parse import urlparse
 
 import httpx
@@ -37,6 +40,9 @@ from app.services.retrieve_steps import (
 )
 from app.services.search import SearchRouter
 from app.services.synthesis_service import SynthesisService, _fallback_answer
+
+if TYPE_CHECKING:
+    from app.services.cache import CacheService
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +85,126 @@ Include background context, mechanics, data points, and comparisons.
 - Group and contrast differing perspectives from sources where relevant.
 """
 
+_DOSSIER_SYNTHESIS_SYSTEM_PROMPT = """\
+You are an executive research analyst and intelligence briefer.
+You have been provided with comprehensive multi-source intelligence from web searches.
+Your goal is to synthesize an executive-grade structured research dossier (Obsidian & Notion ready).
+
+Do NOT output YAML frontmatter or Annotated Source Directory — those are added automatically.
+Generate ONLY the report body with these markdown sections:
+
+# Executive Summary
+Provide a high-level strategic overview (2-3 paragraphs) synthesizing core findings.
+Follow with a bulleted list:
+**Key Findings:**
+- Critical finding 1 with inline citations [1].
+- Critical finding 2 with inline citations [2][3].
+
+# Comparative Analysis
+Provide a Markdown comparison table contrasting primary dimensions across sources:
+| Source / Entity | Domain / Angle | Core Insight & Findings | Citations |
+|---|---|---|---|
+...
+
+# In-Depth Analysis
+Provide detailed analysis broken into 2-4 comprehensive thematic sections using ## headings.
+Discuss technical mechanics, data points, trade-offs, and contrasting perspectives.
+Every factual claim must have inline citations [1], [2], [1][3].
+
+# Strategic Implications & Key Takeaways
+Bulleted summary of critical conclusions, risks, and forward-looking outlook.
+"""
+
+
+def _build_dossier_frontmatter(
+    query: str,
+    sources: list[SourceChunk],
+    settings: Settings,
+) -> str:
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    confidence = "high" if len(sources) >= 4 else "medium"
+    model = getattr(settings, "LLM_CHAT_MODEL", "llama-3.3-70b-versatile")
+    escaped_query = json.dumps(query)
+    return (
+        f"---\n"
+        f"date: {now_str}\n"
+        f"tags:\n"
+        f"  - deep-research\n"
+        f"  - executive-dossier\n"
+        f"query: {escaped_query}\n"
+        f"model: {model}\n"
+        f"confidence: {confidence}\n"
+        f"format: dossier\n"
+        f"---\n\n"
+    )
+
+
+def _build_annotated_source_directory(sources: list[SourceChunk]) -> str:
+    parts = ["\n\n# Annotated Source Directory\n"]
+    for i, s in enumerate(sources, start=1):
+        domain = urlparse(s.url).netloc.lower() or "source"
+        score_str = f"{s.relevance_score:.2f}" if s.relevance_score is not None else "N/A"
+        tier_str = s.fetch_tier or "web"
+        raw_snip = (s.content or "").replace("\n", " ").strip()
+        excerpt = (raw_snip[:280] + "...") if len(raw_snip) > 280 else raw_snip
+        if not excerpt:
+            excerpt = "No excerpt text available."
+        parts.append(
+            f"### [{i}] {s.title or domain}\n"
+            f"- **URL**: {s.url}\n"
+            f"- **Domain**: `{domain}` | **Relevance**: `{score_str}`\n"
+            f"- **Fetch Tier**: `{tier_str}`\n"
+            f"- **Excerpt**: > \"{excerpt}\"\n"
+        )
+    return "\n".join(parts)
+
+
+def _fallback_dossier(query: str, sources: list[SourceChunk], settings: Settings) -> str:
+    frontmatter = _build_dossier_frontmatter(query, sources, settings)
+    source_dir = _build_annotated_source_directory(sources)
+
+    exec_bullets = []
+    table_rows = []
+    deep_dive_parts = []
+
+    for i, s in enumerate(sources, start=1):
+        domain = urlparse(s.url).netloc.lower() or "source"
+        title = s.title or domain
+        snippet = (s.content[:160] + "...").replace("\n", " ").strip() if s.content else "Summary"
+        exec_bullets.append(f"- **{title}**: Synthesized key findings and data from source [{i}].")
+        clean_snip = snippet.replace("|", "/")
+        clean_title = title.replace("|", "/")
+        table_rows.append(f"| [{i}] {clean_title} | `{domain}` | {clean_snip} | [{i}] |")
+
+        detail = s.content[:600].strip() if s.content else "No detailed text available."
+        deep_dive_parts.append(
+            f"### Dimension [{i}]: {title}\n\n"
+            f"Analysis of source intelligence indicates relevant details from {domain}. "
+            f"Key observations:\n\n"
+            f"{detail} [{i}]\n"
+        )
+
+    bullets_text = "\n".join(exec_bullets)
+    table_text = (
+        "| Source / Entity | Domain | Core Insight & Findings | Citations |\n"
+        "|---|---|---|---|\n" + "\n".join(table_rows)
+    )
+    deep_dive_text = "\n".join(deep_dive_parts)
+
+    body = (
+        f"# Executive Summary\n\n"
+        f"This executive dossier synthesizes intelligence for the inquiry: **{query}**. "
+        f"Information was gathered across {len(sources)} distinct primary sources with verified "
+        f"domain authority.\n\n"
+        f"**Key Findings:**\n"
+        f"{bullets_text}\n\n"
+        f"# Comparative Analysis\n\n"
+        f"{table_text}\n\n"
+        f"# Detailed Deep Dive Analysis\n\n"
+        f"{deep_dive_text}\n"
+    )
+    return f"{frontmatter}{body}{source_dir}"
+
 
 class DeepResearchService:
     """Orchestrates 2-hop adaptive deep research with reflection and gap analysis."""
@@ -91,6 +217,7 @@ class DeepResearchService:
         synthesis_service: SynthesisService,
         settings: Settings,
         http_client: httpx.AsyncClient,
+        cache: CacheService | None = None,
     ) -> None:
         self._search = search_client
         self._rerank = rerank_service
@@ -98,6 +225,9 @@ class DeepResearchService:
         self._synthesis = synthesis_service
         self._settings = settings
         self._http = http_client
+        self._cache = cache
+        self._recent_research: deque[dict[str, Any]] = deque(maxlen=50)
+        self._research_store: dict[str, dict[str, Any]] = {}
 
     async def decompose_query(self, query: str) -> list[str]:
         """Generate 2-3 sub-queries for broad multi-angle coverage."""
@@ -303,6 +433,7 @@ class DeepResearchService:
         fetch_top_k: int = 8,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
+        format: str = "markdown",
         request: Request | None = None,
     ) -> RetrieveResponse:
         """Execute full 2-hop adaptive deep research pipeline."""
@@ -462,12 +593,27 @@ class DeepResearchService:
         budget_step(all_sources, self._settings)
 
         # ── Step 5: Final Comprehensive Synthesis ────────────────────────
-        report_text, citations = await self._synthesize_report(query, all_sources)
+        if format == "dossier":
+            report_text, citations = await self._synthesize_dossier(query, all_sources)
+        else:
+            report_text, citations = await self._synthesize_report(query, all_sources)
+
+        research_id = f"res_{uuid.uuid4().hex[:10]}"
+        await self._record_completed_research(
+            research_id=research_id,
+            query=query,
+            report_text=report_text,
+            format_type=format,
+            citations=citations,
+            sources=all_sources,
+        )
+
         log.info(
-            "Deep Research completed in %.2fs (%d sources, %d citations)",
+            "Deep Research completed in %.2fs (%d sources, %d citations, id=%s)",
             time.perf_counter() - start_time,
             len(all_sources),
             len(citations),
+            research_id,
         )
 
         return RetrieveResponse(
@@ -478,6 +624,7 @@ class DeepResearchService:
             sources=all_sources,
             sources_fetched=hop1_fetched + hop2_fetched,
             sources_failed=hop1_failed + hop2_failed,
+            research_id=research_id,
         )
 
     async def research_stream(
@@ -487,6 +634,7 @@ class DeepResearchService:
         fetch_top_k: int = 8,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
+        format: str = "markdown",
         request: Request | None = None,
     ) -> AsyncIterator[str]:
         """Execute 2-hop deep research and yield SSE progress events and tokens."""
@@ -624,10 +772,26 @@ class DeepResearchService:
         # ── Step 5: Final Synthesis ──────────────────────────────────────
         synth_progress = json.dumps({"step": "synthesizing", "sources": len(all_sources)})
         yield f"event: progress\ndata: {synth_progress}\n\n"
-        async for token in self._stream_deep_synthesis(query, all_sources):
+        full_report_tokens: list[str] = []
+        async for token in self._stream_deep_synthesis(
+            query, all_sources, is_dossier=(format == "dossier")
+        ):
+            full_report_tokens.append(token)
             yield f"event: token\ndata: {json.dumps(token)}\n\n"
 
-        yield f"event: done\ndata: {json.dumps({'finish_reason': 'stop'})}\n\n"
+        full_report_text = "".join(full_report_tokens)
+        research_id = f"res_{uuid.uuid4().hex[:10]}"
+        _, citations = verify_citations_step(full_report_text, all_sources)
+        await self._record_completed_research(
+            research_id=research_id,
+            query=query,
+            report_text=full_report_text,
+            format_type=format,
+            citations=citations,
+            sources=all_sources,
+        )
+
+        yield f"event: done\ndata: {json.dumps({'finish_reason': 'stop', 'research_id': research_id})}\n\n"
 
     async def _synthesize_report(
         self, query: str, sources: list[SourceChunk]
@@ -680,13 +844,13 @@ class DeepResearchService:
         raw_answer = _fallback_answer(sources)
         return verify_citations_step(raw_answer, sources)
 
-    async def _stream_deep_synthesis(
+    async def _synthesize_dossier(
         self, query: str, sources: list[SourceChunk]
-    ) -> AsyncIterator[str]:
-        """Stream tokens for deep report synthesis."""
+    ) -> tuple[str, list[Citation]]:
+        """Synthesize an executive-grade structured research dossier (Obsidian/Notion ready)."""
         if not self._settings.LLM_CHAT_URL:
-            yield _fallback_answer(sources)
-            return
+            raw_dossier = _fallback_dossier(query, sources, self._settings)
+            return verify_citations_step(raw_dossier, sources)
 
         parts = [f"Research Query: {query}\n\nSources:\n"]
         for i, src in enumerate(sources, start=1):
@@ -697,11 +861,76 @@ class DeepResearchService:
         payload = {
             "model": self._settings.LLM_CHAT_MODEL,
             "messages": [
-                {"role": "system", "content": _DEEP_SYNTHESIS_SYSTEM_PROMPT},
+                {"role": "system", "content": _DOSSIER_SYNTHESIS_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
             "temperature": 0.3,
-            "max_tokens": max(self._settings.SYNTHESIS_MAX_TOKENS, 3000),
+            "max_tokens": max(self._settings.SYNTHESIS_MAX_TOKENS, 3500),
+        }
+
+        try:
+            headers = (
+                {"Authorization": f"Bearer {self._settings.LLM_API_KEY}"}
+                if self._settings.LLM_API_KEY
+                else {}
+            )
+            resp = await self._http.post(
+                self._settings.LLM_CHAT_URL,
+                json=payload,
+                headers=headers,
+                timeout=self._settings.SYNTHESIS_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                body_text = (
+                    resp.json()
+                    .get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
+                if body_text:
+                    frontmatter = _build_dossier_frontmatter(query, sources, self._settings)
+                    source_dir = _build_annotated_source_directory(sources)
+                    full_dossier = f"{frontmatter}{body_text}{source_dir}"
+                    return verify_citations_step(full_dossier, sources)
+        except Exception as exc:
+            log.warning("Deep dossier synthesis call failed: %s", exc)
+
+        raw_dossier = _fallback_dossier(query, sources, self._settings)
+        return verify_citations_step(raw_dossier, sources)
+
+    async def _stream_deep_synthesis(
+        self, query: str, sources: list[SourceChunk], is_dossier: bool = False
+    ) -> AsyncIterator[str]:
+        """Stream tokens for deep report synthesis."""
+        if not self._settings.LLM_CHAT_URL:
+            if is_dossier:
+                yield _fallback_dossier(query, sources, self._settings)
+            else:
+                yield _fallback_answer(sources)
+            return
+
+        if is_dossier:
+            frontmatter = _build_dossier_frontmatter(query, sources, self._settings)
+            yield frontmatter
+
+        system_prompt = (
+            _DOSSIER_SYNTHESIS_SYSTEM_PROMPT if is_dossier else _DEEP_SYNTHESIS_SYSTEM_PROMPT
+        )
+        parts = [f"Research Query: {query}\n\nSources:\n"]
+        for i, src in enumerate(sources, start=1):
+            title_line = f"  Title: {src.title}\n" if src.title else ""
+            parts.append(f"[{i}] URL: {src.url}\n{title_line}  Content:\n{src.content}\n")
+        user_content = "\n".join(parts)
+
+        payload = {
+            "model": self._settings.LLM_CHAT_MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": 0.3,
+            "max_tokens": max(self._settings.SYNTHESIS_MAX_TOKENS, 3500),
             "stream": True,
         }
 
@@ -734,6 +963,79 @@ class DeepResearchService:
                         token = choices[0].get("delta", {}).get("content", "")
                         if token:
                             yield token
+
+            if is_dossier:
+                source_dir = _build_annotated_source_directory(sources)
+                yield source_dir
         except Exception as exc:
             log.warning("Streaming deep synthesis failed: %s", exc)
-            yield _fallback_answer(sources)
+            if is_dossier:
+                yield _fallback_dossier(query, sources, self._settings)
+            else:
+                yield _fallback_answer(sources)
+
+    async def _record_completed_research(
+        self,
+        research_id: str,
+        query: str,
+        report_text: str,
+        format_type: str,
+        citations: list[Citation],
+        sources: list[SourceChunk],
+    ) -> None:
+        summary_lines = [
+            line
+            for line in report_text.splitlines()
+            if line.strip() and not line.startswith("#") and not line.startswith("---")
+        ]
+        summary = summary_lines[0][:200] if summary_lines else query
+        entry = {
+            "id": research_id,
+            "query": query,
+            "summary": summary,
+            "dossier": report_text,
+            "format": format_type,
+            "created_at": time.time(),
+            "citations_count": len(citations),
+            "sources_count": len(sources),
+            "resource_uri": f"searchproxy://research/{research_id}",
+        }
+        self._recent_research.appendleft(entry)
+        self._research_store[research_id] = entry
+
+        if self._cache is not None:
+            try:
+                await self._cache.save_research_dossier(
+                    dossier_id=research_id,
+                    query=query,
+                    summary=summary,
+                    dossier=report_text,
+                    format_type=format_type,
+                    metadata={"citations": len(citations), "sources": len(sources)},
+                )
+            except Exception:
+                pass
+
+    async def get_recent_research(self, limit: int = 10) -> list[dict[str, Any]]:
+        """List recent deep research summaries."""
+        if self._cache is not None:
+            try:
+                cached = await self._cache.get_recent_research(limit=limit)
+                if cached:
+                    return cached
+            except Exception:
+                pass
+        return list(self._recent_research)[:limit]
+
+    async def get_research_by_id(self, research_id: str) -> dict[str, Any] | None:
+        """Get deep research entry by id."""
+        if research_id in self._research_store:
+            return self._research_store[research_id]
+        if self._cache is not None:
+            try:
+                cached = await self._cache.get_research_by_id(research_id)
+                if cached:
+                    return cached
+            except Exception:
+                pass
+        return None

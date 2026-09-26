@@ -73,7 +73,7 @@ class RetrieveRequest(BaseModel):
         description="Number of search results to retrieve before reranking.",
     )
     fetch_top_k: int = Field(
-        default=5, ge=1, le=10,
+        default=5, ge=0, le=10,
         description="Number of top-ranked results to fetch content from after reranking.",
     )
     synthesize: bool = Field(

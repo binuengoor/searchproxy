@@ -62,7 +62,7 @@ class ExaSearchProvider(BaseSearchProvider):
         body: dict[str, Any] = {
             "query": query,
             "numResults": max_results,
-            "contents": {"text": {"maxCharacters": 500}},
+            "contents": {"text": True},
         }
         if include_domains:
             inc = [normalize_domain(d) for d in include_domains if normalize_domain(d)]
@@ -95,8 +95,16 @@ class ExaSearchProvider(BaseSearchProvider):
         for item in data.get("results", []):
             title = str(item.get("title") or "")
             url = str(item.get("url") or "")
-            snippet = str(item.get("text") or "")
+            text = str(item.get("text") or "")
+            snippet = text[:500] if len(text) > 500 else text
             if url:
-                results.append(SearchResult(title=title, url=url, snippet=snippet))
+                results.append(
+                    SearchResult(
+                        title=title,
+                        url=url,
+                        snippet=snippet,
+                        text=text if text else None,
+                    )
+                )
 
         return results

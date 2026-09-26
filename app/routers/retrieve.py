@@ -64,12 +64,13 @@ async def retrieve(
     Set ``stream`` to true to receive the LLM synthesis as SSE tokens.
     """
     log.info(
-        "/v1/retrieve query='%s' max_results=%d fetch_top_k=%d synthesize=%s stream=%s",
+        "/v1/retrieve query='%s' max_results=%d fetch_top_k=%d synthesize=%s stream=%s hybrid=%s",
         body.query,
         body.max_results,
         body.fetch_top_k,
         body.synthesize,
         body.stream,
+        body.hybrid,
     )
 
     if body.stream and body.synthesize:
@@ -81,6 +82,7 @@ async def retrieve(
                 include_domains=body.include_domains,
                 exclude_domains=body.exclude_domains,
                 freshness=body.freshness,
+                hybrid=body.hybrid,
                 request=request,
             ),
             media_type="text/event-stream",
@@ -94,5 +96,6 @@ async def retrieve(
         include_domains=body.include_domains,
         exclude_domains=body.exclude_domains,
         freshness=body.freshness,
+        hybrid=body.hybrid,
         request=request,
     )

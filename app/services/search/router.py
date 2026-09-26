@@ -1,11 +1,12 @@
-"""Search router orchestrating multi-provider quota rotation, circuit breaking, and SearXNG fallback."""
+"""Search router orchestrating quota rotation, circuit breaking, and SearXNG fallback."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -22,6 +23,60 @@ if TYPE_CHECKING:
     from app.services.cache import CacheService
 
 log = logging.getLogger(__name__)
+
+
+def _canonical_key(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path.rstrip("/")
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return f"{host}{path}"
+
+
+def reciprocal_rank_fusion(
+    result_lists: list[list[SearchResult]],
+    k: int = 60,
+    max_results: int = 10,
+) -> list[SearchResult]:
+    """Combine multiple ranked search results using Reciprocal Rank Fusion (RRF)."""
+    scores: dict[str, float] = {}
+    doc_map: dict[str, SearchResult] = {}
+
+    for r_list in result_lists:
+        for rank, item in enumerate(r_list, start=1):
+            key = _canonical_key(item.url)
+            scores[key] = scores.get(key, 0.0) + (1.0 / (k + rank))
+            if key not in doc_map:
+                doc_map[key] = item
+            else:
+                existing = doc_map[key]
+                existing_text = getattr(existing, "text", None)
+                item_text = getattr(item, "text", None)
+                best_text = item_text or existing_text
+
+                # Prefer item if it has text or longer snippet
+                if item_text and not existing_text:
+                    chosen = item
+                elif existing_text and not item_text:
+                    chosen = existing
+                elif len(item.snippet) > len(existing.snippet):
+                    chosen = item
+                else:
+                    chosen = existing
+
+                # Ensure chosen keeps best_text so instant bypass is never wiped
+                if not getattr(chosen, "text", None) and best_text:
+                    chosen = SearchResult(
+                        title=chosen.title,
+                        url=chosen.url,
+                        snippet=chosen.snippet,
+                        text=best_text,
+                    )
+                doc_map[key] = chosen
+
+    sorted_keys = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+    return [doc_map[k] for k in sorted_keys[:max_results]]
 
 
 class SearchRouter:
@@ -80,7 +135,129 @@ class SearchRouter:
         self._cooldowns[name] = cooldown_until
         if name in self._stats:
             self._stats[name].cooldown_until = cooldown_until
-        log.warning("Search provider '%s' placed on cooldown for %d seconds (until %.0f)", name, secs, cooldown_until)
+        log.warning(
+            "Search provider '%s' placed on cooldown for %d seconds (until %.0f)",
+            name,
+            secs,
+            cooldown_until,
+        )
+
+    def _record_failure(self, name: str, exc: Exception) -> None:
+        stat = self._stats.get(name)
+        if stat:
+            stat.failed_requests += 1
+            stat.last_error = str(exc)
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+            self._set_cooldown(name)
+        else:
+            self._set_cooldown(name, duration=30.0)
+
+    async def _hybrid_search(
+        self,
+        query: str,
+        max_results: int,
+        clean_inc: list[str] | None,
+        clean_exc: list[str] | None,
+        clean_freshness: str | None,
+        call_fn: Any,
+    ) -> list[SearchResult]:
+        """Execute hybrid search combining a lexical engine and a semantic engine (Exa) with RRF."""
+        sem_provider = next(
+            (
+                p
+                for p in self._providers
+                if p.name == "exa" and p.is_available and not self._is_cooling_down(p.name)
+            ),
+            None,
+        )
+        lex_provider = next(
+            (
+                p
+                for p in self._providers
+                if p.name in ("brave", "searxng")
+                and p.is_available
+                and not self._is_cooling_down(p.name)
+            ),
+            None,
+        )
+
+        # Fallback for custom / mock providers or when specific engines unavailable
+        if lex_provider is None or sem_provider is None:
+            avail = [
+                p
+                for p in self._providers
+                if p.is_available and not self._is_cooling_down(p.name)
+            ]
+            if sem_provider is None:
+                sem_candidates = [
+                    p
+                    for p in avail
+                    if lex_provider is None or p.name != lex_provider.name
+                ]
+                if sem_candidates:
+                    sem_provider = sem_candidates[0]
+            if lex_provider is None:
+                lex_candidates = [
+                    p
+                    for p in avail
+                    if sem_provider is None or p.name != sem_provider.name
+                ]
+                if lex_candidates:
+                    lex_provider = lex_candidates[0]
+
+        if not sem_provider or not lex_provider or sem_provider.name == lex_provider.name:
+            provider = sem_provider or lex_provider
+            if provider:
+                try:
+                    return await call_fn(provider)
+                except Exception as exc:
+                    log.warning(
+                        "Single hybrid fallback provider '%s' failed: %s",
+                        provider.name,
+                        exc,
+                    )
+            return []
+
+        log.info(
+            "Executing RRF hybrid search: lexical='%s', semantic='%s'",
+            lex_provider.name,
+            sem_provider.name,
+        )
+        tasks = [call_fn(lex_provider), call_fn(sem_provider)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        lex_res: list[SearchResult] = results[0] if isinstance(results[0], list) else []
+        sem_res: list[SearchResult] = results[1] if isinstance(results[1], list) else []
+
+        if isinstance(results[0], Exception):
+            log.warning(
+                "Lexical provider '%s' failed during hybrid search: %s",
+                lex_provider.name,
+                results[0],
+            )
+            self._record_failure(lex_provider.name, results[0])
+        if isinstance(results[1], Exception):
+            log.warning(
+                "Semantic provider '%s' failed during hybrid search: %s",
+                sem_provider.name,
+                results[1],
+            )
+            self._record_failure(sem_provider.name, results[1])
+
+        if lex_res and sem_res:
+            fused = reciprocal_rank_fusion([lex_res, sem_res], k=60, max_results=max_results)
+            log.info(
+                "RRF fusion combined %d lexical and %d semantic results -> %d fused results",
+                len(lex_res),
+                len(sem_res),
+                len(fused),
+            )
+            return fused
+        elif lex_res:
+            return lex_res[:max_results]
+        elif sem_res:
+            return sem_res[:max_results]
+        return []
 
     async def search(
         self,
@@ -89,19 +266,20 @@ class SearchRouter:
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
         freshness: str | None = None,
+        hybrid: bool = False,
     ) -> SearchResponse:
-        """Search across providers with rotation, circuit breaking, and fallback.
-
-        Graceful degradation: on complete failure across all providers,
-        returns SearchResponse(results=[]) so callers never crash.
-        """
+        """Search across providers with rotation, circuit breaking, fallback, or RRF hybrid."""
         log.info(
             "Searching across providers for '%s' (max_results=%d, "
-            "include_domains=%s, exclude_domains=%s, freshness=%s)",
-            query, max_results, include_domains, exclude_domains, freshness,
+            "include_domains=%s, exclude_domains=%s, freshness=%s, hybrid=%s)",
+            query,
+            max_results,
+            include_domains,
+            exclude_domains,
+            freshness,
+            hybrid,
         )
 
-        # Normalize domains and freshness for consistency and cache stability
         clean_inc = (
             list(dict.fromkeys(normalize_domain(d) for d in include_domains if normalize_domain(d)))
             if include_domains
@@ -117,7 +295,8 @@ class SearchRouter:
         # 1. Read cache
         if self._cache is not None:
             cached = await self._cache.get_search(
-                query, max_results,
+                query,
+                max_results,
                 include_domains=clean_inc,
                 exclude_domains=clean_exc,
                 freshness=clean_freshness,
@@ -132,9 +311,7 @@ class SearchRouter:
                 log.info("Cache MISS for search: '%s'", query)
 
         results: list[SearchResult] = []
-        tier1 = self.tier1_providers
 
-        # Helper to execute search on provider with fallback for legacy signatures
         async def _call_provider(p: BaseSearchProvider) -> list[SearchResult]:
             try:
                 return await p.search(
@@ -150,13 +327,24 @@ class SearchRouter:
                     return await p.search(query=query, max_results=max_results)
                 raise
 
-        # 2. Try Tier 1 with round-robin rotation
-        if tier1:
+        # 2. Hybrid Search (RRF) if requested
+        if hybrid:
+            results = await self._hybrid_search(
+                query=query,
+                max_results=max_results,
+                clean_inc=clean_inc,
+                clean_exc=clean_exc,
+                clean_freshness=clean_freshness,
+                call_fn=_call_provider,
+            )
+
+        # 3. Standard Tier 1 with round-robin rotation (if not hybrid or hybrid returned nothing)
+        tier1 = self.tier1_providers
+        if not results and tier1:
             async with self._lock:
                 start_idx = self._tier1_index
                 self._tier1_index = (self._tier1_index + 1) % len(tier1)
 
-            # Order providers starting from current round-robin index
             ordered_tier1 = [tier1[(start_idx + i) % len(tier1)] for i in range(len(tier1))]
 
             for provider in ordered_tier1:
@@ -172,19 +360,30 @@ class SearchRouter:
                     log.info("Attempting search via Tier 1 provider: '%s'", provider.name)
                     results = await _call_provider(provider)
                     if results:
-                        log.info("Provider '%s' succeeded with %d results", provider.name, len(results))
+                        log.info(
+                            "Provider '%s' succeeded with %d results",
+                            provider.name,
+                            len(results),
+                        )
                         break
                     else:
-                        log.info("Provider '%s' returned 0 results; trying next provider", provider.name)
+                        log.info("Provider '%s' returned 0 results; trying next", provider.name)
                 except httpx.HTTPStatusError as exc:
                     if stat:
                         stat.failed_requests += 1
                         stat.last_error = f"HTTP {exc.response.status_code}"
                     if exc.response.status_code == 429:
-                        log.warning("Provider '%s' returned 429 Too Many Requests (quota exceeded)", provider.name)
+                        log.warning(
+                            "Provider '%s' returned 429 Too Many Requests",
+                            provider.name,
+                        )
                         self._set_cooldown(provider.name)
                     else:
-                        log.warning("Provider '%s' failed with HTTP %d", provider.name, exc.response.status_code)
+                        log.warning(
+                            "Provider '%s' failed with HTTP %d",
+                            provider.name,
+                            exc.response.status_code,
+                        )
                         self._set_cooldown(provider.name, duration=60.0)
                 except Exception as exc:
                     if stat:
@@ -193,7 +392,7 @@ class SearchRouter:
                     log.warning("Provider '%s' error: %s", provider.name, exc)
                     self._set_cooldown(provider.name, duration=30.0)
 
-        # 3. Fallback to Tier 2 (SearXNG safety net) if Tier 1 failed or returned nothing
+        # 4. Fallback to Tier 2 (SearXNG safety net) if Tier 1 failed or returned nothing
         if not results:
             tier2 = self.tier2_providers
             for provider in tier2:
@@ -209,7 +408,11 @@ class SearchRouter:
                     log.info("Attempting search via fallback safety net: '%s'", provider.name)
                     results = await _call_provider(provider)
                     if results:
-                        log.info("Fallback '%s' succeeded with %d results", provider.name, len(results))
+                        log.info(
+                            "Fallback '%s' succeeded with %d results",
+                            provider.name,
+                            len(results),
+                        )
                         break
                 except Exception as exc:
                     if stat:
@@ -220,11 +423,13 @@ class SearchRouter:
 
         response = SearchResponse(results=results)
 
-        # 4. Write cache on success
+        # 5. Write cache on success
         if results and self._cache is not None:
             try:
                 await self._cache.set_search(
-                    query, max_results, response.model_dump(),
+                    query,
+                    max_results,
+                    response.model_dump(),
                     include_domains=clean_inc,
                     exclude_domains=clean_exc,
                     freshness=clean_freshness,

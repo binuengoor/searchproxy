@@ -14,6 +14,7 @@ import httpx
 
 from app.config import Settings
 from app.schemas import Citation, SourceChunk
+from app.services.retrieve_steps import verify_citations_step
 
 log = logging.getLogger(__name__)
 
@@ -144,8 +145,13 @@ class SynthesisService:
             log.warning("Synthesis returned unexpected response shape: %s", json.dumps(data)[:500])
             return _fallback_answer(sources), _extract_citations(sources)
 
-        citations = _extract_citations(sources)
-        log.info("Synthesized answer for query='%s' (%d chars, %d citations)", query, len(answer), len(citations))
+        answer, citations = verify_citations_step(answer, sources)
+        log.info(
+            "Synthesized answer for query='%s' (%d chars, %d citations)",
+            query,
+            len(answer),
+            len(citations),
+        )
         return answer, citations
 
     async def synthesize_stream(

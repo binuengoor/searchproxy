@@ -96,6 +96,10 @@ class RetrieveRequest(BaseModel):
         default=None,
         description="Optional time recency filter for search results: 'day', 'week', 'month', 'year'.",
     )
+    hybrid: bool = Field(
+        default=False,
+        description="Whether to use RRF hybrid search (combining lexical and semantic engines).",
+    )
     # Open WebUI & MCPHub tool wrapper compatibility
     body: Any = Field(default=None, description="Optional nested body wrapper from MCPHub / Open WebUI tool invocations.")
     messages: list[MessageItem] = Field(default=[], description="OpenAI-style messages array. Query is extracted from the last user message if query is omitted.")
@@ -115,7 +119,7 @@ class RetrieveRequest(BaseModel):
                 except Exception:
                     pass
             if isinstance(nested, dict):
-                for k in ("query", "max_results", "fetch_top_k", "synthesize", "stream", "messages"):
+                for k in ("query", "max_results", "fetch_top_k", "synthesize", "stream", "hybrid", "messages"):
                     if k in nested and (k not in data or not data[k]):
                         data[k] = nested[k]
 
@@ -201,6 +205,10 @@ class RetrieveResponse(BaseModel):
 
     query: str = Field(..., description="The original query.")
     answer: str = Field(default="", description="Synthesized answer with inline [N] citations. Empty if synthesize=false.")
+    report: str = Field(
+        default="",
+        description="Synthesized report (alias for answer for deep research compatibility).",
+    )
     citations: list[Citation] = Field(default_factory=list, description="Ordered list of cited sources.")
     sources: list[SourceChunk] = Field(
         default_factory=list,
@@ -208,6 +216,24 @@ class RetrieveResponse(BaseModel):
     )
     sources_fetched: int = Field(default=0, description="Number of sources successfully fetched.")
     sources_failed: int = Field(default=0, description="Number of sources that failed to fetch.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_answer_and_report_before(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "answer" in data and not data.get("report"):
+                data["report"] = data["answer"]
+            elif "report" in data and not data.get("answer"):
+                data["answer"] = data["report"]
+        return data
+
+    @model_validator(mode="after")
+    def _sync_answer_and_report_after(self) -> RetrieveResponse:
+        if not self.report and self.answer:
+            self.report = self.answer
+        elif not self.answer and self.report:
+            self.answer = self.report
+        return self
 
 
 # ---------------------------------------------------------------------------

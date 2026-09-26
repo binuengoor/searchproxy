@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from fastapi import Request
 
 from app.config import Settings
-from app.schemas import SourceChunk
+from app.schemas import Citation, SourceChunk
 from app.services.fetch_chain import FetchChain, _is_anti_bot_block
 from app.services.models import FetchResult
 from app.services.rerank_service import RerankService
@@ -89,23 +89,35 @@ async def search_step(
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
     freshness: str | None = None,
+    hybrid: bool = False,
 ) -> tuple[list[dict[str, str]], int]:
     log.info(
         "Retrieve pipeline: search for '%s' (max_results=%d, "
-        "include_domains=%s, exclude_domains=%s, freshness=%s)",
-        query, max_results, include_domains, exclude_domains, freshness,
+        "include_domains=%s, exclude_domains=%s, freshness=%s, hybrid=%s)",
+        query, max_results, include_domains, exclude_domains, freshness, hybrid,
     )
-    search_resp = await search_client.search(
-        query=query,
-        max_results=max_results,
-        include_domains=include_domains,
-        exclude_domains=exclude_domains,
-        freshness=freshness,
-    )
+    search_kwargs: dict[str, Any] = {
+        "query": query,
+        "max_results": max_results,
+        "include_domains": include_domains,
+        "exclude_domains": exclude_domains,
+        "freshness": freshness,
+    }
+    if hybrid:
+        search_kwargs["hybrid"] = True
+    search_resp = await search_client.search(**search_kwargs)
     if not search_resp.results:
         log.warning("Retrieve pipeline: no search results for '%s'", query)
         return [], 0
-    results = [{"title": r.title, "url": r.url, "snippet": r.snippet} for r in search_resp.results]
+    results = [
+        {
+            "title": r.title,
+            "url": r.url,
+            "snippet": r.snippet,
+            "text": r.text or "",
+        }
+        for r in search_resp.results
+    ]
     return results, len(results)
 
 
@@ -460,3 +472,115 @@ def budget_step(sources: list[SourceChunk], settings: Settings) -> list[SourceCh
         total_content, actual_total,
     )
     return sources
+
+
+_STOP_WORDS = {
+    "the", "and", "for", "that", "this", "with", "from", "are", "was", "were",
+    "been", "have", "has", "had", "will", "would", "should", "could", "about",
+    "into", "also", "more", "most", "than", "then", "their", "there", "they",
+    "them", "these", "those", "what", "which", "when", "where", "who", "whom",
+    "why", "how", "all", "any", "both", "each", "few", "some", "such", "only",
+    "own", "same", "too", "very", "can", "just", "now", "not",
+}
+
+
+def _clean_claim_tokens(text: str) -> set[str]:
+    cleaned = re.sub(r"\[\d+\]", " ", text)
+    cleaned = re.sub(r"[`\x00]", " ", cleaned)
+    words = re.findall(r"\b[a-zA-Z0-9_\-\.]{3,}\b", cleaned.lower())
+    return {w.strip(".") for w in words if w.strip(".") not in _STOP_WORDS}
+
+
+def verify_citations_step(
+    answer: str,
+    sources: list[SourceChunk],
+) -> tuple[str, list[Citation]]:
+    """Inspect answer for [N] citations, remove hallucinated markers, and filter citations."""
+    if not answer or not sources:
+        return answer, []
+
+    # 1. Mask code blocks and inline code to prevent stripping array indices (e.g. arr[0])
+    code_blocks: list[str] = []
+
+    def _mask_code(m: re.Match[str]) -> str:
+        idx = len(code_blocks)
+        code_blocks.append(m.group(0))
+        return f"\x00CODE_{idx}\x00"
+
+    masked_answer = re.sub(r"```[\s\S]*?```", _mask_code, answer)
+    masked_answer = re.sub(r"`[^`\n]+`", _mask_code, masked_answer)
+
+    # 2. Remove out-of-bounds citation markers ([N] where N < 1 or N > len(sources))
+    def _strip_out_of_bounds(m: re.Match[str]) -> str:
+        idx = int(m.group(1))
+        if 1 <= idx <= len(sources):
+            return m.group(0)
+        return ""
+
+    answer_clean = re.sub(r"\[(\d+)\]", _strip_out_of_bounds, masked_answer)
+
+    # 3. Check each sentence/claim for overlap with the cited source
+    paragraphs = answer_clean.split("\n")
+    cleaned_paragraphs: list[str] = []
+
+    for para in paragraphs:
+        if not para.strip() or "[" not in para:
+            cleaned_paragraphs.append(para)
+            continue
+
+        indent_len = len(para) - len(para.lstrip())
+        indent = para[:indent_len]
+        para_content = para[indent_len:]
+
+        sentences = re.split(r"(?<=[.!?])\s+", para_content)
+        verified_sentences: list[str] = []
+
+        for sentence in sentences:
+            citations_in_sentence = re.findall(r"\[(\d+)\]", sentence)
+            if not citations_in_sentence:
+                verified_sentences.append(sentence)
+                continue
+
+            claim_tokens = _clean_claim_tokens(sentence)
+            cur_sentence = sentence
+
+            for c_str in citations_in_sentence:
+                c_id = int(c_str)
+                src = sources[c_id - 1]
+                src_text = f"{src.url} {src.title} {src.content}".lower()
+
+                if claim_tokens:
+                    has_overlap = any(tok in src_text for tok in claim_tokens)
+                    if not has_overlap:
+                        # Hallucinated citation: no entity/n-gram overlap with source
+                        cur_sentence = re.sub(rf"\[{c_id}\]", "", cur_sentence)
+
+            verified_sentences.append(cur_sentence)
+
+        cleaned_para = " ".join(verified_sentences)
+        cleaned_para = re.sub(r"\[\s*\]", "", cleaned_para)
+        cleaned_para = re.sub(r",\s*([.,;!?])", r"\1", cleaned_para)
+        cleaned_para = re.sub(r" +([.,;!?])", r"\1", cleaned_para)
+        cleaned_para = re.sub(r" +", " ", cleaned_para).strip()
+        cleaned_paragraphs.append(f"{indent}{cleaned_para}")
+
+    reconstructed = "\n".join(cleaned_paragraphs)
+
+    # 4. Restore masked code blocks and inline code
+    for idx, cb in enumerate(code_blocks):
+        reconstructed = reconstructed.replace(f"\x00CODE_{idx}\x00", cb)
+
+    # 5. Filter citations to only return sources actually cited in the cleaned text
+    active_ids = sorted({int(m) for m in re.findall(r"\[(\d+)\]", reconstructed)})
+    citations = [
+        Citation(
+            id=i,
+            url=sources[i - 1].url,
+            title=sources[i - 1].title,
+            relevance_score=sources[i - 1].relevance_score,
+        )
+        for i in active_ids
+        if 1 <= i <= len(sources)
+    ]
+
+    return reconstructed, citations

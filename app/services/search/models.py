@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -12,6 +13,10 @@ class SearchResult(BaseModel):
     title: str = Field(..., description="Page title.")
     url: str = Field(..., description="Source URL.")
     snippet: str = Field(..., description="Short content summary (excerpt) from the page.")
+    text: str | None = Field(
+        default=None,
+        description="Optional full page content returned directly by search provider.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -42,7 +47,7 @@ class SearchResponse(BaseModel):
                         {
                             "title": "Real Madrid CF - Wikipedia",
                             "url": "https://en.wikipedia.org/wiki/Real_Madrid_CF",
-                            "snippet": "Real Madrid Club de Fútbol, commonly referred to as Real Madrid...",
+                            "snippet": "Real Madrid Club de Fútbol, commonly referred to as...",
                         }
                     ]
                 }

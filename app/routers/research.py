@@ -5,6 +5,7 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.dependencies import get_deep_research_service
@@ -61,6 +62,10 @@ class ResearchRequest(BaseModel):
         default=[],
         description="Optional list of domains to exclude from research.",
     )
+    stream: bool = Field(
+        default=False,
+        description="If true, yield progress steps and tokens via Server-Sent Events (SSE).",
+    )
     # Open WebUI tool wrapper compatibility
     body: Any = Field(default=None, description="Optional nested body wrapper from tool invocations.")
     messages: list[MessageItem] = Field(default=[], description="OpenAI-style messages array.")
@@ -71,7 +76,14 @@ class ResearchRequest(BaseModel):
         if not isinstance(data, dict):
             return data
         if "body" in data and isinstance(data["body"], dict):
-            for k in ("query", "fetch_top_k", "include_domains", "exclude_domains", "messages"):
+            for k in (
+                "query",
+                "fetch_top_k",
+                "include_domains",
+                "exclude_domains",
+                "stream",
+                "messages",
+            ):
                 if k in data["body"] and (k not in data or not data[k]):
                     data[k] = data["body"][k]
         if not data.get("query") and data.get("messages"):
@@ -94,9 +106,26 @@ async def deep_research(
     body: ResearchRequest,
     request: Request,
     service: Annotated[DeepResearchService, Depends(get_deep_research_service)],
-) -> RetrieveResponse:
+) -> RetrieveResponse | StreamingResponse:
     """Execute autonomous 2-hop deep research and return a cited report."""
-    log.info("/v1/research query='%s' fetch_top_k=%d", body.query, body.fetch_top_k)
+    log.info(
+        "/v1/research query='%s' fetch_top_k=%d stream=%s",
+        body.query,
+        body.fetch_top_k,
+        body.stream,
+    )
+    if body.stream:
+        return StreamingResponse(
+            service.research_stream(
+                query=body.query,
+                fetch_top_k=body.fetch_top_k,
+                include_domains=body.include_domains,
+                exclude_domains=body.exclude_domains,
+                request=request,
+            ),
+            media_type="text/event-stream",
+        )
+
     return await service.research(
         query=body.query,
         fetch_top_k=body.fetch_top_k,

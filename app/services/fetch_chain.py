@@ -8,22 +8,20 @@ import re
 import time
 
 import httpx
-from pydantic import BaseModel, Field
 
 from app.clean_executor import get_executor
 from app.config import Settings
-from app.services.content_cleaner import clean_content
-from app.services.models import FetchResult
 from app.services.byparr_client import ByparrClient
-from app.services.tika_client import TikaClient
+from app.services.content_cleaner import clean_content
 from app.services.crawl4ai import Crawl4AIClient
 from app.services.fast_fetch_client import FastFetchClient
-from app.middleware.correlation import _current_correlation_id
-from app.services.metrics import get_collector
 from app.services.jina_reader import JinaReaderClient
-from app.services.scraperapi import ScraperAPIClient
-from app.services.scrape_do import ScrapeDoClient
+from app.services.metrics import get_collector
+from app.services.models import FetchResult
 from app.services.reddit_client import RedditClient
+from app.services.scrape_do import ScrapeDoClient
+from app.services.scraperapi import ScraperAPIClient
+from app.services.tika_client import TikaClient
 
 log = logging.getLogger(__name__)
 
@@ -150,18 +148,68 @@ class FetchChain:
             else:
                 log.info("Cache MISS for fetch: %s", url)
 
-        # ── Document / PDF Extraction via Tika ────────────────────────
-        if (url.lower().endswith(".pdf") or ".pdf?" in url.lower()) and self._tika.is_configured():
+        # ── Document / PDF Extraction (Tier 0: pymupdf4llm, Tier 1: Tika) ──
+        if url.lower().endswith(".pdf") or ".pdf?" in url.lower():
             try:
-                resp = await self._client.get(url, follow_redirects=True, timeout=self._settings.TIKA_TIMEOUT)
+                resp = await self._client.get(
+                    url, follow_redirects=True, timeout=self._settings.TIKA_TIMEOUT,
+                )
                 if resp.status_code == 200 and resp.content:
-                    tika_result = await self._tika.parse_bytes(resp.content, url)
-                    if tika_result.success:
-                        tika_result.fetch_time_ms = self._elapsed_ms(start_time)
-                        await self._store_fetch(url, tika_result)
-                        return tika_result
+                    # Attempt in-process pymupdf4llm extraction first
+                    def _extract_pymupdf(data: bytes) -> tuple[str, str]:
+                        import pymupdf
+                        import pymupdf4llm
+                        doc = pymupdf.open(stream=data, filetype="pdf")
+                        try:
+                            title = str((doc.metadata or {}).get("title") or "").strip()
+                            md = pymupdf4llm.to_markdown(doc) or ""
+                            return md, title
+                        finally:
+                            doc.close()
+
+                    loop = asyncio.get_running_loop()
+                    try:
+                        md_text, pdf_title = await loop.run_in_executor(
+                            get_executor(), _extract_pymupdf, resp.content,
+                        )
+                        if md_text and len(md_text.strip()) >= 50:
+                            cleaned_md = await loop.run_in_executor(
+                                get_executor(),
+                                clean_content,
+                                md_text.strip(),
+                                url,
+                                aggressive_clean,
+                            )
+                            pdf_res = FetchResult(
+                                success=True,
+                                url=url,
+                                markdown=cleaned_md,
+                                title=pdf_title,
+                                source="pymupdf4llm",
+                                fetch_time_ms=self._elapsed_ms(start_time),
+                            )
+                            await self._store_fetch(url, pdf_res)
+                            return pdf_res
+                        log.info(
+                            "pymupdf4llm returned < 50 chars for %s, falling back to Tika",
+                            url,
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            "pymupdf4llm extraction failed for %s: %s, falling back to Tika",
+                            url,
+                            exc,
+                        )
+
+                    # Fallback to Tika
+                    if self._tika.is_configured():
+                        tika_result = await self._tika.parse_bytes(resp.content, url)
+                        if tika_result.success:
+                            tika_result.fetch_time_ms = self._elapsed_ms(start_time)
+                            await self._store_fetch(url, tika_result)
+                            return tika_result
             except Exception as exc:
-                log.warning("Tika direct PDF extraction failed for %s: %s", url, exc)
+                log.warning("PDF extraction failed for %s: %s", url, exc)
 
         # ── Specialized Domain: Reddit Thread Extractor ─────────────
         if self._reddit.is_reddit_url(url):

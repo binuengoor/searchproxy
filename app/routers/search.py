@@ -64,6 +64,10 @@ class PerplexityQuery(BaseModel):
     search_recency_filter: str = Field(
         default="", description="Ignored — forwarded for Open WebUI compat."
     )
+    hybrid: bool = Field(
+        default=False,
+        description="Enable Reciprocal Rank Fusion (RRF) hybrid search (lexical + semantic).",
+    )
 
     @model_validator(mode="after")
     def _extract_query(self) -> "PerplexityQuery":
@@ -99,10 +103,17 @@ async def compat_perplexity(
     ``messages[]`` (query auto-extracted from the last user message).
     """
     log.info(
-        "/compat/perplexity relay query='%s' max_results=%d",
+        "/compat/perplexity relay query='%s' max_results=%d hybrid=%s",
         body.query,
         body.max_results,
+        body.hybrid,
     )
+    if body.hybrid:
+        return await client.search(
+            query=body.query,
+            max_results=body.max_results,
+            hybrid=True,
+        )
     return await client.search(query=body.query, max_results=body.max_results)
 
 
@@ -123,10 +134,17 @@ async def openai_search_alias(
     Provided for clients expecting an OpenAI-style ``/v1/search`` endpoint.
     """
     log.info(
-        "/v1/search alias query='%s' max_results=%d",
+        "/v1/search alias query='%s' max_results=%d hybrid=%s",
         body.query,
         body.max_results,
+        body.hybrid,
     )
+    if body.hybrid:
+        return await client.search(
+            query=body.query,
+            max_results=body.max_results,
+            hybrid=True,
+        )
     return await client.search(query=body.query, max_results=body.max_results)
 
 
